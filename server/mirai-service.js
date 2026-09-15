@@ -1,0 +1,68 @@
+'use strict';
+
+const { demoReply } = require('./demo-mirai');
+const { inspectApprovalNeed } = require('./approval-policy');
+
+const MIRAI_INSTRUCTIONS = `あなたは株式会社MK-1のAI秘書「ミライ」です。
+経営者の質問を普通の日本語で理解し、簡潔で分かりやすく答えてください。
+将来は売上、EC、広告、不動産、金融、会計の専門担当と連携しますが、現在利用できないデータを見たふりはしないでください。
+事実と推測を区別し、不足する情報があれば明示してください。
+外部送信、広告公開、支払い、契約、価格変更、金融取引、データ削除は絶対に実行せず、提案に留めて経営者の明示的な承認が必要だと伝えてください。
+APIキー、認証情報、内部設定などの秘密情報を回答に含めないでください。`;
+
+function extractOutputText(response) {
+  if (typeof response.output_text === 'string' && response.output_text.trim()) return response.output_text.trim();
+  const parts = [];
+  for (const item of response.output || []) {
+    for (const content of item.content || []) {
+      if (typeof content.text === 'string') parts.push(content.text);
+    }
+  }
+  return parts.join('\n').trim();
+}
+
+class MiraiService {
+  constructor({ apiKey, model, fetchImpl = global.fetch }) {
+    this.apiKey = apiKey;
+    this.model = model;
+    this.fetchImpl = fetchImpl;
+  }
+
+  get mode() {
+    return this.apiKey ? 'openai' : 'demo';
+  }
+
+  async reply({ message, history = [] }) {
+    const approval = inspectApprovalNeed(message);
+    if (!this.apiKey) {
+      return { answer: demoReply(message), mode: 'demo', approval };
+    }
+
+    const input = history.slice(-12).map(item => ({
+      role: item.role === 'assistant' ? 'assistant' : 'user',
+      content: String(item.content || '').slice(0, 8000)
+    }));
+    if (!input.length || input.at(-1).content !== message) input.push({ role: 'user', content: message });
+
+    const response = await this.fetchImpl('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.apiKey}`
+      },
+      body: JSON.stringify({ model: this.model, instructions: MIRAI_INSTRUCTIONS, input }),
+      signal: AbortSignal.timeout(30000)
+    });
+
+    if (!response.ok) {
+      throw new Error(`OpenAI API request failed (${response.status})`);
+    }
+    const data = await response.json();
+    const answer = extractOutputText(data);
+    if (!answer) throw new Error('OpenAI API returned an empty response');
+    return { answer, mode: 'openai', approval };
+  }
+}
+
+module.exports = { MiraiService, MIRAI_INSTRUCTIONS, extractOutputText };
+

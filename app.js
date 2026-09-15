@@ -111,16 +111,45 @@ function render() {
   if (currentRoute === 'chat') { const m=document.querySelector('#messages'); m.scrollTop=m.scrollHeight; }
 }
 
-function handleChat(text) {
-  const msg = text.trim(); if (!msg) return;
-  state.conversations.push({ id:`msg-${Date.now()}`, role:'user', text:msg, createdAt:new Date().toISOString() });
-  let answer;
+function demoChatResult(msg) {
+  let answer, task = null;
   if (/承認/.test(msg)) answer = `現在、承認待ちは${waitingCount()}件です。「承認待ち」画面で内容と上限金額を確認できます。承認するまで実行しません。`;
   else if (/結果|売上|どう/.test(msg)) answer = `今月のEC売上は${yen(state.salesMetrics[0].revenue)}です。広告費1円あたり約${state.adMetrics[0].roas}円の売上につながっています。特に再訪問向け広告が好調です。`;
-  else if (/動画|広告案|作って/.test(msg)) { const task={ id:`task-${Date.now()}`, projectId:'project-ec', agent:'制作AI', title:msg, status:'作業中', progress:10 }; state.tasks.unshift(task); answer='承知しました。制作AIへ依頼しました。まず3つの下書きを作ります。外部公開はせず、完成後に代表へ確認をお願いします。'; }
-  else if (/Instagram|広告/.test(msg)) { const task={ id:`task-${Date.now()}`, projectId:'project-ec', agent:'広告戦略AI', title:msg, status:'作業中', progress:10 }; state.tasks.unshift(task); answer='承知しました。広告戦略AIに、対象のお客様・内容・予算案をまとめるよう依頼しました。費用が発生する操作は、承認まで止めます。'; }
+  else if (/動画|広告案|作って/.test(msg)) {
+    task = { id:`task-${Date.now()}`, projectId:'project-ec', agent:'制作AI', title:msg, status:'作業中', progress:10 };
+    answer='承知しました。制作AIへ依頼しました。まず3つの下書きを作ります。外部公開はせず、完成後に代表へ確認をお願いします。';
+  }
+  else if (/Instagram|広告/.test(msg)) {
+    task = { id:`task-${Date.now()}`, projectId:'project-ec', agent:'広告戦略AI', title:msg, status:'作業中', progress:10 };
+    answer='承知しました。広告戦略AIに、対象のお客様・内容・予算案をまとめるよう依頼しました。費用が発生する操作は、承認まで止めます。';
+  }
   else answer='承知しました。内容を整理し、適切なAI担当へ振り分けます。お金の使用や外部公開が必要な場合は、必ず先に承認をお願いします。';
-  state.conversations.push({ id:`msg-${Date.now()+1}`, role:'assistant', text:answer, createdAt:new Date().toISOString() });
+  return { answer, task };
+}
+
+async function requestMirai(message) {
+  const history = state.conversations.slice(-12).map(item => ({ role:item.role, content:item.text }));
+  const response = await fetch('api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, history })
+  });
+  if (!response.ok) throw new Error(`Mirai backend unavailable (${response.status})`);
+  const result = await response.json();
+  if (!result.answer) throw new Error('Mirai backend returned no answer');
+  return result;
+}
+
+async function handleChat(text) {
+  const msg = text.trim(); if (!msg) return;
+  state.conversations.push({ id:`msg-${Date.now()}`, role:'user', text:msg, createdAt:new Date().toISOString() });
+  saveState(); render();
+  let result;
+  try { result = await requestMirai(msg); }
+  catch { result = demoChatResult(msg); }
+  if (result.mode === 'demo' && !result.task) result.task = demoChatResult(msg).task;
+  if (result.task) state.tasks.unshift(result.task);
+  state.conversations.push({ id:`msg-${Date.now()+1}`, role:'assistant', text:result.answer, createdAt:new Date().toISOString() });
   saveState(); render();
 }
 function decideApproval(id, decision) { const a=state.approvals.find(x=>x.id===id); if(!a)return; a.status=decision; a.decidedAt=new Date().toISOString(); state.auditLog.unshift({ id:`log-${Date.now()}`, actor:state.settings.ownerName, action:decision, target:a.title, createdAt:a.decidedAt }); saveState(); showToast(`${a.title}を「${decision}」として記録しました。`); render(); }
@@ -144,4 +173,4 @@ window.addEventListener('hashchange',()=>{ currentRoute=location.hash.replace('#
 render();
 
 // Browser-free tests can import the initial data and safety helpers.
-if (typeof module !== 'undefined') module.exports = { initialState, clone, safe, APP_VERSION, STORAGE_KEY };
+if (typeof module !== 'undefined') module.exports = { initialState, clone, safe, demoChatResult, APP_VERSION, STORAGE_KEY };

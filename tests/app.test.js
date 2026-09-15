@@ -8,7 +8,7 @@ const stub = () => ({ innerHTML: '', textContent: '', classList: { add(){}, remo
 global.document = { querySelector: stub, createElement: stub, addEventListener(){} };
 global.window = { addEventListener(){} };
 
-const { initialState, clone, safe, APP_VERSION } = require('../app.js');
+const { initialState, clone, safe, demoChatResult, APP_VERSION } = require('../app.js');
 
 test('Ver.0.1として起動する', () => assert.equal(APP_VERSION, '0.1.0'));
 
@@ -41,4 +41,9 @@ test('保存用コピーを変更しても初期データを壊さない', () =>
 
 test('入力された文章を画面へ安全に表示する', () => {
   assert.equal(safe('<script>"危険"</script>'), '&lt;script&gt;&quot;危険&quot;&lt;/script&gt;');
+});
+
+test('バックエンドが使えない場合も従来のデモ応答を維持する', () => {
+  assert.match(demoChatResult('今月の売上はどう？').answer, /EC売上/);
+  assert.equal(demoChatResult('動画広告を作って').task.agent, '制作AI');
 });
