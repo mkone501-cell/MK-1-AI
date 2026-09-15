@@ -104,3 +104,34 @@ Phase 2では、有料の認証サービスを契約せずに検証できる、�
 - HTTPSと安全な本番ホスティングは未設定です。
 
 本番公開前に、永続データベース、HTTPS、バックアップ、セッション失効、二要素認証またはパスキーを追加します。
+
+## 9. Phase 3 本番・永続セッション移行基盤
+
+### セッション境界
+
+`SessionStoreContract`が`create`、`getFromRequest`、`destroy`、Cookie生成を定義します。開発は`MemorySessionStore`、将来の本番は`DatabaseSessionStore`を使用します。DB製品固有の処理は`SessionRepositoryContract`の外側へ分離します。`session-store.js`はPhase 2コードとの互換入口です。
+
+DBストアはブラウザへ渡すランダムなセッションIDをそのままrepositoryへ渡さず、SHA-256ハッシュだけを検索キーとして渡します。DB流出時に保存値をそのままCookieとして悪用されにくくします。
+
+### 非公開APIの境界
+
+`createAuthGuard`は次をサーバー側で確認します。
+
+1. 認証設定が完了している
+2. Cookieに対応する有効なセッションがある
+3. セッション利用者の権限が`owner`
+4. 状態変更時はCSRFトークンが一致する
+
+画面を非表示にする処理はアクセス制御として扱いません。売上、EC、広告、不動産、金融、会計、個人情報のAPIは、データを読む前にこのガードを通します。`/api/private/ping`は秘密データを含まない実装例です。
+
+### 本番境界
+
+- `NODE_ENV=production`ではHTTPS Origin、Secure Cookie、DBセッション、本人認証を強制します。
+- CORSは`ALLOWED_ORIGINS`との完全一致で判定し、ワイルドカードを使用しません。
+- `SameSite=Strict`を標準とします。将来フロントとAPIを別サイトにする場合は、HTTPS、`SameSite=None`、厳格なCORS、CSRFを一体で検証します。
+- ログは既知の秘密項目とBearer認証値を`[REDACTED]`へ置換します。
+- `/health`は秘密値、利用者情報、接続文字列を返しません。
+
+### 未接続のもの
+
+DBサービス、DBクライアント、マイグレーション実行、本番ドメイン、HTTPSホスティング、バックアップ、二要素認証は未接続です。外部送信・公開・支払い・金融取引・削除・契約を実行する機能も追加しません。
