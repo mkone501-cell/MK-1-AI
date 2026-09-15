@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f7f4ed" />
+    <title>MK-1 AI経営本部</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar">
+        <div class="brand">
+          <div class="brand-mark">M1</div>
+          <div><strong>MK-1</strong><span>AI経営本部</span></div>
+        </div>
+        <nav id="main-nav" aria-label="メインメニュー"></nav>
+        <div class="sidebar-footer"><span class="status-dot"></span> すべて正常に稼働中</div>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <button class="menu-button" id="menu-button" aria-label="メニューを開く">☰</button>
+          <div><p class="eyebrow">MK-1 AI HEADQUARTERS</p><h1 id="page-title">ホーム</h1></div>
+          <div class="top-actions">
+            <button class="icon-button" data-route="approvals" aria-label="承認待ちを見る">🔔<span id="notice-count">0</span></button>
+            <div class="avatar">代表</div>
+          </div>
+        </header>
+        <section id="app" class="content" aria-live="polite"></section>
+      </main>
+    </div>
+    <div id="toast" class="toast" role="status"></div>
+    <script src="app.js"></script>
+  </body>
+</html>

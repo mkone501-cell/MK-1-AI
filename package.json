@@ -1,0 +1,10 @@
+{
+  "name": "mk-1-ai-headquarters",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MK-1 AI経営本部 Ver.0.1",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "start": "python3 -m http.server 8000 --bind 0.0.0.0"
+  }
+}
