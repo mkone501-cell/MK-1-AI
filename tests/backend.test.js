@@ -74,7 +74,7 @@ test('ヘルスチェックは秘密情報を返さない', async () => {
     const response = await fetch(`http://127.0.0.1:${port}/api/health`);
     const body = await response.json();
     assert.equal(response.status, 200);
-    assert.deepEqual(Object.keys(body).sort(), ['authentication', 'mode', 'ok', 'service']);
+    assert.deepEqual(Object.keys(body).sort(), ['authentication', 'environment', 'mode', 'ok', 'service', 'sessionStore']);
   } finally {
     await new Promise(resolve => server.close(resolve));
   }
