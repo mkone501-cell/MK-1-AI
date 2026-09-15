@@ -39,7 +39,7 @@ jobs:
       - name: 公開するファイルを準備
         run: |
           mkdir -p public
-          cp index.html app.js styles.css public/
+          cp index.html app.js auth.js styles.css public/
           touch public/.nojekyll
       - name: GitHub Pagesを準備
         uses: actions/configure-pages@v5
