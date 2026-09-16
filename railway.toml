@@ -1,0 +1,12 @@
+# Phase 4: Railway deployment preparation.
+# This file contains no secrets and does not create or purchase any Railway service.
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "npm start"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
