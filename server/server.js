@@ -9,6 +9,7 @@ const { loadConfig } = require('./config');
 const { createSessionStore } = require('./session-store-factory');
 const { createAuthGuard } = require('./auth-guard');
 const { createLogger } = require('./safe-logger');
+const { migrateSessions } = require('./session-stores/migrate-sessions');
 
 const ROOT = path.resolve(__dirname, '..');
 const MAX_BODY_BYTES = 32 * 1024;
@@ -114,7 +115,14 @@ function createApplication(options = {}) {
     }
 
     if (req.method === 'GET' && (url.pathname === '/health' || url.pathname === '/api/health')) {
-      return respondJson(req, res, 200, { ok: true, service: 'mk1-mirai', mode: mirai.mode, environment: config.environment, sessionStore: config.session.driver, authentication: auth.incomplete ? 'invalid' : auth.configured ? 'required' : 'setup' });
+      if (url.pathname === '/api/health' && config.production && !await requireOwner(req, res)) return;
+      try {
+        if (config.session.driver === 'database') await sessions.repository.check();
+        return respondJson(req, res, 200, { ok: true, service: 'mk1-mirai', mode: mirai.mode, environment: config.environment, sessionStore: config.session.driver, authentication: auth.incomplete ? 'invalid' : auth.configured ? 'required' : 'setup', database: config.session.driver === 'database' ? 'connected' : 'unused' });
+      } catch {
+        logger.error('database.health_failed');
+        return respondJson(req, res, 503, { ok: false, service: 'mk1-mirai', database: 'unavailable' });
+      }
     }
 
     if (req.method === 'GET' && url.pathname === '/api/auth/status') {
@@ -138,7 +146,7 @@ function createApplication(options = {}) {
         const { token, session } = await sessions.create(user);
         return respondJson(req, res, 200, { authenticated: true, user, csrfToken: session.csrfToken }, { 'Set-Cookie': sessions.cookie(token) });
       } catch (error) {
-        logger.warn('auth.login_failed', { reason: error.message });
+        logger.warn('auth.login_failed');
         return respondJson(req, res, error.statusCode || 400, { error: 'ログイン情報を確認できませんでした。' });
       }
     }
@@ -164,7 +172,7 @@ function createApplication(options = {}) {
         return respondJson(req, res, 200, await mirai.reply({ message, history }));
       } catch (error) {
         const status = error.statusCode || 502;
-        logger.error('mirai.request_failed', { message: error.message });
+        logger.error('mirai.request_failed', { status });
         return respondJson(req, res, status, { error: status === 502 ? 'ミライとの通信に失敗しました。時間をおいてお試しください。' : 'リクエストを確認できませんでした。' });
       }
     }
@@ -192,23 +200,32 @@ function createApplication(options = {}) {
 function createServer(options = {}) {
   const app = createApplication(options);
   return http.createServer((req, res) => app.handler(req, res).catch(error => {
-    (options.logger || createLogger()).error('server.unhandled', { message: error.message });
+    (options.logger || createLogger()).error('server.unhandled');
     if (!res.headersSent) sendJson(res, 500, { error: 'サーバーエラーが発生しました。' });
     else res.end();
   }));
 }
 
-if (require.main === module) {
-  const app = createApplication();
+async function start(options = {}) {
+  const app = createApplication(options);
   if (app.auth.incomplete) {
-    console.error('MK1_OWNER_EMAILとMK1_OWNER_PASSWORD_HASHの両方を設定してください。');
-    process.exit(1);
+    throw new Error('MK1_OWNER_EMAILとMK1_OWNER_PASSWORD_HASHの両方を設定してください。');
   }
-  http.createServer((req, res) => app.handler(req, res)).listen(app.config.port, '0.0.0.0', () => {
-    console.log(`MK-1 AI経営本部: http://localhost:${app.config.port}`);
-    console.log(`ログイン: ${app.auth.configured ? '井上さん専用認証' : '未設定・デモのみ'}`);
-    console.log(`ミライ: ${app.mirai.mode === 'openai' ? 'OpenAI接続モード' : 'APIキー未設定・デモモード'}`);
+  if (app.config.session.driver === 'database') {
+    await migrateSessions(app.sessions.repository);
+    await app.sessions.repository.check();
+  }
+  const server = createServer({ ...options, config: app.config, auth: app.auth, sessions: app.sessions, mirai: app.mirai });
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(app.config.port, '0.0.0.0', resolve); });
+  console.log(`MK-1 AI経営本部: ポート ${server.address().port} で起動しました。`);
+  return server;
+}
+
+if (require.main === module) {
+  start().catch(() => {
+    console.error('起動できませんでした。DATABASE_URL、PostgreSQL接続、認証とOrigin設定をRailwayで確認してください。秘密情報はログに表示しません。');
+    process.exitCode = 1;
   });
 }
 
-module.exports = { createApplication, createServer, securityHeaders, requestOriginAllowed };
+module.exports = { createApplication, createServer, start, securityHeaders, requestOriginAllowed };

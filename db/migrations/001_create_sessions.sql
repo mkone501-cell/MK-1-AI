@@ -1,4 +1,4 @@
--- PostgreSQL向けの将来用スキーマ例。Phase 3では実DBへ接続しません。
+-- Phase 4.1: 初回起動時または npm run db:migrate で安全に適用します。
 CREATE TABLE IF NOT EXISTS owner_sessions (
   token_hash CHAR(64) PRIMARY KEY,
   user_id TEXT NOT NULL,

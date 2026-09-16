@@ -1,6 +1,32 @@
 # Phase 4: Railway本番移行準備
 
-この文書は、Phase 3で作った安全基盤をRailway + PostgreSQLへ接続する前のチェックリストです。
+Phase 4.1でPostgreSQLセッションを接続する手順です。GitHub Pagesの画面は従来の公開デモのままです。
+
+## 井上さんがRailway画面で行う設定
+
+1. Railwayで **MK-1-AI** サービスを開き、**Variables** を開きます。PostgreSQL側ではなくMK-1-AI側です。
+2. `DATABASE_URL` という変数を追加し、Railwayの「変数を参照」で **PostgreSQLサービス → DATABASE_URL** を選択します。表示上のサービス名が`Postgres`なら参照形式は `${{Postgres.DATABASE_URL}}` です。サービス名が異なる場合は画面から選んでください。URLをGitHub、README、チャットに貼らないでください。
+3. 同じMK-1-AIのVariablesに `NODE_ENV=production`、`SESSION_STORE=database`、`ALLOWED_ORIGINS=https://mkone501-cell.github.io`、`COOKIE_SECURE=true` を設定します。GitHub PagesとRailwayは別サイトのため、実際にブラウザからログインする段階では `COOKIE_SAME_SITE=None` が必要です。SecureとCSRF確認は引き続き有効です。公開デモのJavaScriptはまだ本番APIへ切り替えていません。
+4. `MK1_OWNER_EMAIL` と `MK1_OWNER_PASSWORD_HASH` をRailwayのVariablesへ設定します。ハッシュは手元で `npm run create-password-hash` を実行して作ります。**生パスワードは登録しません。** `OPENAI_API_KEY` はAI利用を開始するときだけ登録します。
+5. `PORT` はRailwayが与える値をそのまま使います。自分で固定値に上書きする必要はありません。
+
+`DATABASE_URL`が見つからない場合、**MK-1-AIのVariablesでPostgreSQLの変数参照が追加されているか**確認してください。PostgreSQLサービスがオンラインでも、アプリへ変数は自動で渡されません。
+
+## 初回テーブル作成
+
+デプロイ後、アプリ起動前に`db/migrations/001_create_sessions.sql`を自動適用します。`CREATE TABLE IF NOT EXISTS`と`CREATE INDEX IF NOT EXISTS`のみを使い、既存のセッション表を削除しません。DBへの接続や作成に失敗した場合はサーバーの起動を止め、秘密情報のない説明をログへ出します。
+
+手動で実行したい場合は、RailwayのMK-1-AIサービスで同じ環境変数が利用できるシェルから `npm run db:migrate` を実行できます。通常の初回デプロイに手動操作は不要です。
+
+## 接続とヘルスチェック
+
+- Railwayのデプロイログに「ポート ... で起動しました」と表示され、サービスがHealthyになることを確認します。
+- MK-1-AIサービスの公開URLへ `/health` を付けて開き、`"ok":true`と`"database":"connected"`を確認します。接続不能ならHTTP 503と`"database":"unavailable"`です。接続URLやDBパスワードは返しません。
+- `/api/health`は本番でログインCookieが必要です。未ログインではHTTP 401を返します。
+
+Railway内部ホスト（`*.railway.internal`）はサービス間の私設ネットワークを使用します。外部PostgreSQL URLの場合は証明書検証付きTLSで接続します。外部DBが独自CAを使う場合のみ、Railway側の`DATABASE_SSL_CA`へCA証明書を設定してください。証明書検証を無効にする設定は用意していません。
+
+**今回のPRをマージする前にRailway画面で秘密情報を共有する必要はありません。** マージ後に上記の参照変数と認証設定をRailway画面で確認してください。
 
 ## このPhaseで行うこと
 

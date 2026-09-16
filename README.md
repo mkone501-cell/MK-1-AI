@@ -1,5 +1,7 @@
 # MK-1 AI経営本部 Ver.0.1 / Phase 3
 
+Phase 4.1でRailway PostgreSQLへの永続セッション接続を実装しました。Railwayでの変数参照、初回テーブル作成、ヘルスチェックの手順は[Railway運用手順](docs/PHASE4_RAILWAY.md)をご覧ください。
+
 株式会社MK-1の経営者が、AI秘書との会話を入口に事業の状況を把握するための最小版です。Phase 3では既存画面とPhase 2認証を維持したまま、安全な本番環境と永続セッションDBへ移行するための基盤を追加しました。
 
 ## まず知っておくこと
@@ -11,7 +13,7 @@
 - Phase 1では外部送信、広告公開、支払い、契約、価格変更、金融取引、データ削除を実行する機能はありません。
 - ログインを設定した場合、未ログインの利用者はミライのバックエンドを利用できません。
 - GitHub Pagesにはログイン情報や非公開データを置きません。GitHub Pages版は引き続き公開デモです。
-- Phase 3は本番移行のための土台です。実DBと本番ホスティングはまだ接続していないため、インターネットへ一般公開しないでください。
+- Phase 4.1はRailwayのPostgreSQLへ接続するコードを追加しました。本番URL・認証情報・ブラウザとの接続設定を確認してから運用してください。
 
 ## Phase 3で追加した安全基盤
 
@@ -23,7 +25,7 @@
 - ログへパスワード、Cookie、APIキー、トークン等を渡しても伏せ字にする基本保護を追加しました。
 - `/health`と`/api/health`は稼働状態だけを返し、秘密情報を返しません。
 
-Phase 3では特定のDBサービスを選定・契約していません。`db/migrations/001_create_sessions.sql`は、将来PostgreSQLを採用した場合に使えるスキーマ例です。
+Phase 4.1では作成済みのRailway PostgreSQLを利用します。`db/migrations/001_create_sessions.sql`は起動時に安全に適用されます。
 
 ## 開発・テスト・本番設定の分離
 
@@ -51,9 +53,9 @@ Phase 3では特定のDBサービスを選定・契約していません。`db/m
 - HTTPSの`ALLOWED_ORIGINS`
 - オーナーのメールアドレスとパスワードハッシュ
 - `SESSION_STORE=database`
-- プログラムから注入される永続DB repository
+- RailwayのMK-1-AIサービスに設定された`DATABASE_URL`と、接続可能なPostgreSQL
 
-最後のrepositoryはPhase 3では未接続です。このため、誤って未完成の構成を本番公開することを防げます。
+Phase 4.1ではrepositoryを`DATABASE_URL`から生成します。URLの形式が不正、DBが未起動、権限不足の場合はサーバーを起動しません。
 
 ## Phase 2の構成
 
