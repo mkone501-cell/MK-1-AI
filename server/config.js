@@ -24,6 +24,7 @@ function loadConfig(env = process.env) {
     allowedOrigins: splitOrigins(env.ALLOWED_ORIGINS || (production ? '' : `http://localhost:${port},http://127.0.0.1:${port}`)),
     cookie: { secure, sameSite },
     session: { driver: env.SESSION_STORE || (production ? 'database' : 'memory'), ttlMs: Number(env.SESSION_TTL_SECONDS || 28800) * 1000 },
+    database: { url: env.DATABASE_URL || '', sslCa: env.DATABASE_SSL_CA || '' },
     owner: { email: env.MK1_OWNER_EMAIL || '', passwordHash: env.MK1_OWNER_PASSWORD_HASH || '' },
     openai: { apiKey: env.OPENAI_API_KEY || '', model: env.OPENAI_MODEL || 'gpt-5-mini' }
   };

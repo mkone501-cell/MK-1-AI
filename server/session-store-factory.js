@@ -2,11 +2,15 @@
 
 const { MemorySessionStore } = require('./session-stores/memory-session-store');
 const { DatabaseSessionStore } = require('./session-stores/database-session-store');
+const { createPostgresSessionRepository } = require('./session-stores/postgres-session-repository');
 
 function createSessionStore(config, { sessionRepository } = {}) {
   const options = { ttlMs: config.session.ttlMs, secure: config.cookie.secure, sameSite: config.cookie.sameSite };
   if (config.session.driver === 'memory') return new MemorySessionStore(options);
-  if (config.session.driver === 'database') return new DatabaseSessionStore({ ...options, repository: sessionRepository });
+  if (config.session.driver === 'database') return new DatabaseSessionStore({
+    ...options,
+    repository: sessionRepository || createPostgresSessionRepository(config.database.url, { sslCa: config.database.sslCa })
+  });
   throw new Error(`未対応のSESSION_STOREです: ${config.session.driver}`);
 }
 
