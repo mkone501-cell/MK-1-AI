@@ -46,6 +46,8 @@ let state = loadState();
 let currentRoute = location.hash.replace('#/', '') || 'home';
 let serverConversation = false;
 let activeConversationId = null;
+let knowledgeItems = [];
+let editingKnowledgeId = null;
 
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function loadState() {
@@ -103,7 +105,14 @@ function approvalsView() { const pending=state.approvals.filter(x=>x.status==='�
 function approvalDetail(a) { return `<div class="approval-detail"><span class="agent-icon">${a.category==='広告費'?'¥':'↗'}</span><div class="row-main"><div>${statusPill(a.status)} <small>${safe(a.category)}</small></div><h3>${safe(a.title)}</h3><p style="color:var(--muted);font-size:13px;line-height:1.7">${safe(a.description)}</p><small>提案：${safe(a.requestedBy)} ・ ${new Date(a.requestedAt).toLocaleString('ja-JP')}${a.amount?` ・ 上限 ${yen(a.amount)}`:''}</small></div>${a.status==='承認待ち'?`<div class="button-row"><button class="primary" data-approval="${a.id}" data-decision="承認済み">承認する</button><button class="danger-button" data-approval="${a.id}" data-decision="却下">却下する</button></div>`:''}</div>`; }
 function adsView() { return `<div class="page-head"><div><h2>広告案</h2><p>制作AIが作った案です。外部にはまだ公開されていません。</p></div><button class="primary" data-route="chat">＋ AI秘書に新しい案を依頼</button></div><div class="ads-grid">${state.adPlans.map((a,i)=>`<div class="card"><div class="ad-preview"><div><small>NORTH STAR BEANS</small><br><b>${safe(a.title)}</b></div></div>${statusPill(a.status)} <small>${safe(a.type)}</small><h3>${safe(a.title)}</h3><p style="color:var(--muted);font-size:13px;line-height:1.7">${safe(a.description)}</p><button class="secondary" data-ad="${a.id}">内容を見る</button></div>`).join('')}</div>`; }
 function reportsView() { const m=state.adMetrics[0], s=state.salesMetrics[0]; return `<div class="page-head"><div><h2>9月の分析レポート</h2><p>NORTH STAR BEANS ・ 2026年9月1日〜15日</p></div><button class="secondary" id="download-report">レポートを保存</button></div><div class="metrics">${metricCard('売上',yen(s.revenue),'↗ 前月比 18.4%','¥')}${metricCard('広告費',yen(m.spend),'予算内で進行中','◎')}${metricCard('購入数',`${m.conversions}件`,'↗ 前月比 12.7%','▣')}${metricCard('広告の効果',`${m.roas.toFixed(2)}倍`,'目標 3.0倍を達成','↗')}</div><div class="dashboard-grid"><div class="card"><div class="section-head"><h3>EC売上の推移</h3></div>${chart()}</div><div class="card"><h3>AIからの分かりやすいまとめ</h3><p style="line-height:1.8;color:var(--muted)">広告費1円あたり、約3.42円の売上につながっています。特に、一度商品を見たお客様への広告が好調です。</p><div class="notice"><strong>次の提案</strong><br>好調な広告を続けながら、新しい動画3案を少額で比較することをおすすめします。費用を使う前に承認をお願いします。</div></div></div>`; }
-function settingsView() { const s=state.settings; return `<div class="page-head"><div><h2>設定</h2><p>会社情報と安全ルールを確認できます。</p></div></div><form class="card" id="settings-form"><div class="form-grid"><div class="field"><label>会社名</label><input name="companyName" value="${safe(s.companyName)}"></div><div class="field"><label>代表者名</label><input name="ownerName" value="${safe(s.ownerName)}"></div><div class="field"><label>表示言語</label><select><option>日本語</option></select></div><div class="field"><label>バージョン</label><input value="Ver.${APP_VERSION}" disabled></div></div><div class="notice" style="margin:20px 0"><strong>重要操作の承認：有効</strong><br>広告費、価格変更、重要メッセージ、契約、データ削除、外部公開は必ず承認待ちになります。この設定はVer.0.1では無効にできません。</div><button class="primary" type="submit">設定を保存</button> <button class="danger-button" type="button" id="reset-data">お試しデータに戻す</button></form>`; }
+function knowledgeView() {
+  if (!serverConversation) return '';
+  const editing = knowledgeItems.find(item => item.id === editingKnowledgeId && item.active);
+  return `<div class="card" style="margin-top:20px"><div class="section-head"><h3>経営知識（長期記憶）</h3></div><p>登録を確認した情報だけを保存します。会話から自動登録しません。パスワード・APIキー・秘密情報は入力しないでください。</p>
+    <form id="knowledge-form"><div class="form-grid"><div class="field"><label>カテゴリ</label><input name="category" list="knowledge-categories" maxlength="40" value="${safe(editing?.category || '')}" required><datalist id="knowledge-categories">${['会社基本情報','事業','店舗','商品','顧客','スタッフ','経営方針','承認ルール','不動産','財務','EC','広告','その他'].map(value=>`<option value="${value}">`).join('')}</datalist></div><div class="field"><label>タイトル</label><input name="title" maxlength="120" value="${safe(editing?.title || '')}" required></div></div><div class="field"><label>本文</label><textarea name="body" maxlength="3000" required>${safe(editing?.body || '')}</textarea></div><div class="field"><label>情報源・登録理由</label><input name="source" maxlength="500" value="${safe(editing?.source || '')}" required></div><div class="field"><label><input type="checkbox" name="confirmed" required> 内容を確認し、長期知識として${editing ? '更新' : '登録'}します</label></div><button class="primary" type="submit">${editing ? '知識を更新' : '知識を登録'}</button> ${editing ? '<button class="secondary" type="button" id="cancel-knowledge-edit">編集をやめる</button>' : ''}</form>
+    <div style="margin-top:20px"><h3>登録済みの知識</h3>${knowledgeItems.length ? knowledgeItems.map(item=>`<div class="approval-detail"><div class="row-main"><small>${safe(item.category)} ・ ${item.active ? '有効' : '無効'}</small><h3>${safe(item.title)}</h3><p>${safe(item.body)}</p><small>情報源：${safe(item.source)}</small></div>${item.active ? `<div class="button-row"><button class="secondary" data-knowledge-edit="${safe(item.id)}">編集</button><button class="danger-button" data-knowledge-disable="${safe(item.id)}">無効化</button></div>` : ''}</div>`).join('') : '<p>登録された経営知識はまだありません。</p>'}</div></div>`;
+}
+function settingsView() { const s=state.settings; return `<div class="page-head"><div><h2>設定</h2><p>会社情報と安全ルールを確認できます。</p></div></div><form class="card" id="settings-form"><div class="form-grid"><div class="field"><label>会社名</label><input name="companyName" value="${safe(s.companyName)}"></div><div class="field"><label>代表者名</label><input name="ownerName" value="${safe(s.ownerName)}"></div><div class="field"><label>表示言語</label><select><option>日本語</option></select></div><div class="field"><label>バージョン</label><input value="Ver.${APP_VERSION}" disabled></div></div><div class="notice" style="margin:20px 0"><strong>重要操作の承認：有効</strong><br>広告費、価格変更、重要メッセージ、契約、データ削除、外部公開は必ず承認待ちになります。この設定はVer.0.1では無効にできません。</div><button class="primary" type="submit">設定を保存</button> <button class="danger-button" type="button" id="reset-data">お試しデータに戻す</button></form>${knowledgeView()}`; }
 
 const views = { home:homeView, chat:chatView, projects:projectsView, agents:agentsView, approvals:approvalsView, ads:adsView, reports:reportsView, settings:settingsView };
 function render() {
@@ -161,6 +170,7 @@ async function handleChat(text) {
 
 window.addEventListener('mk1:authenticated', async () => {
   serverConversation = true;
+  loadKnowledge();
   state.conversations = [];
   activeConversationId = null;
   saveState();
@@ -179,6 +189,25 @@ window.addEventListener('mk1:authenticated', async () => {
     render();
   } catch { showToast('保存済みの会話を読み込めませんでした。'); }
 });
+async function loadKnowledge() {
+  try {
+    const response = await fetch('api/knowledge', { credentials:'same-origin', cache:'no-store' });
+    if (!response.ok) throw new Error('knowledge unavailable');
+    knowledgeItems = (await response.json()).knowledge;
+    if (currentRoute === 'settings') render();
+  } catch { showToast('経営知識を読み込めませんでした。'); }
+}
+async function saveKnowledge(form) {
+  const data = new FormData(form);
+  const value = { category:data.get('category'), title:data.get('title'), body:data.get('body'), source:data.get('source'), confirmed:data.get('confirmed') !== null };
+  const response = await fetch(editingKnowledgeId ? `api/knowledge/${editingKnowledgeId}` : 'api/knowledge', {
+    method:editingKnowledgeId ? 'PUT' : 'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(value)
+  });
+  if (!response.ok) { const error=await response.json(); throw new Error(error.error || '登録できませんでした。'); }
+  editingKnowledgeId = null;
+  await loadKnowledge();
+  showToast('経営知識を保存しました。');
+}
 function decideApproval(id, decision) { const a=state.approvals.find(x=>x.id===id); if(!a)return; a.status=decision; a.decidedAt=new Date().toISOString(); state.auditLog.unshift({ id:`log-${Date.now()}`, actor:state.settings.ownerName, action:decision, target:a.title, createdAt:a.decidedAt }); saveState(); showToast(`${a.title}を「${decision}」として記録しました。`); render(); }
 
 document.addEventListener('click', e => {
@@ -191,10 +220,19 @@ document.addEventListener('click', e => {
   if(e.target.closest('[data-ad]')) showToast('広告案の詳細画面は次のバージョンで追加します。');
   if(e.target.closest('#download-report')) showToast('レポート保存機能は次のバージョンで追加します。');
   if(e.target.closest('#reset-data') && confirm('入力・承認履歴をお試しデータに戻しますか？')) { state=clone(initialState); saveState(); render(); showToast('お試しデータに戻しました。'); }
+  const edit=e.target.closest('[data-knowledge-edit]'); if(edit) { editingKnowledgeId=edit.dataset.knowledgeEdit; render(); }
+  if(e.target.closest('#cancel-knowledge-edit')) { editingKnowledgeId=null; render(); }
+  const disable=e.target.closest('[data-knowledge-disable]');
+  if(disable && confirm('この経営知識を無効化しますか？ 会話履歴や他の知識は削除されません。')) {
+    fetch(`api/knowledge/${disable.dataset.knowledgeDisable}/disable`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ confirmed:true }) })
+      .then(response=>{ if(!response.ok) throw new Error(); return loadKnowledge(); })
+      .then(()=>showToast('経営知識を無効化しました。')).catch(()=>showToast('無効化できませんでした。'));
+  }
 });
 document.addEventListener('submit', e => {
   if(e.target.id==='chat-form') { e.preventDefault(); handleChat(document.querySelector('#chat-input').value); }
   if(e.target.id==='settings-form') { e.preventDefault(); const data=new FormData(e.target); state.settings.companyName=data.get('companyName'); state.settings.ownerName=data.get('ownerName'); saveState(); showToast('設定を保存しました。'); }
+  if(e.target.id==='knowledge-form') { e.preventDefault(); saveKnowledge(e.target).catch(error=>showToast(error.message)); }
 });
 window.addEventListener('hashchange',()=>{ currentRoute=location.hash.replace('#/','')||'home'; render(); });
 render();
