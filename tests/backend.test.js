@@ -6,7 +6,7 @@ const { canExecuteProtectedAction } = require('../server/approval-guard');
 const { AuthService } = require('../server/auth-service');
 const { SessionStore } = require('../server/session-store');
 const { hashPassword, verifyPassword } = require('../server/password');
-const { MiraiService, extractOutputText } = require('../server/mirai-service');
+const { MiraiService, extractOutputText, classifyOpenAIError } = require('../server/mirai-service');
 const { createServer } = require('../server/server');
 
 test('重要操作は承認が必要になる', () => {
@@ -47,6 +47,30 @@ test('APIキーはサーバーからOpenAIへの認証だけに使用する', as
   assert.equal(request.url, 'https://api.openai.com/v1/responses');
   assert.equal(request.options.headers.Authorization, 'Bearer test-secret-key');
   assert.doesNotMatch(JSON.stringify(result), /test-secret-key/);
+});
+
+test('OpenAIエラーは秘密を含めず安全な分類だけを保持する', async () => {
+  const service = new MiraiService({
+    apiKey: 'never-log-this-secret',
+    model: 'test-model',
+    fetchImpl: async () => ({
+      ok: false,
+      status: 401,
+      json: async () => ({ error: { message: 'secret upstream detail', code: 'invalid_api_key' } })
+    })
+  });
+  await assert.rejects(
+    service.reply({ message: '接続テスト' }),
+    error => {
+      assert.equal(error.statusCode, 502);
+      assert.equal(error.providerStatus, 401);
+      assert.equal(error.providerCategory, 'authentication');
+      assert.doesNotMatch(JSON.stringify(error), /never-log-this-secret|secret upstream detail/);
+      return true;
+    }
+  );
+  assert.equal(classifyOpenAIError(429, 'insufficient_quota'), 'quota');
+  assert.equal(classifyOpenAIError(404, 'model_not_found'), 'model');
 });
 
 test('パスワードはハッシュ化し、元の文字列を保存しない', async () => {
