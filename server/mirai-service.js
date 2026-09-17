@@ -21,6 +21,32 @@ function extractOutputText(response) {
   return parts.join('\n').trim();
 }
 
+function classifyOpenAIError(status, code = '') {
+  const safeCode = String(code || '').toLowerCase();
+  if (status === 401 || status === 403) return 'authentication';
+  if (safeCode === 'insufficient_quota') return 'quota';
+  if (status === 429) return 'rate_limit_or_quota';
+  if (safeCode.includes('model') || safeCode === 'model_not_found') return 'model';
+  if (status === 400 || status === 404) return 'request_or_model';
+  if (status >= 500) return 'provider';
+  return 'unknown';
+}
+
+async function createOpenAIError(response) {
+  let code = '';
+  try {
+    const body = await response.json();
+    code = body?.error?.code || '';
+  } catch {
+    // エラー本文はログへ出さない。分類できない場合はHTTP状態だけを使う。
+  }
+  const error = new Error('OpenAI API request failed');
+  error.statusCode = 502;
+  error.providerStatus = Number(response.status) || 0;
+  error.providerCategory = classifyOpenAIError(response.status, code);
+  return error;
+}
+
 class MiraiService {
   constructor({ apiKey, model, fetchImpl = global.fetch }) {
     this.apiKey = apiKey;
@@ -54,9 +80,7 @@ class MiraiService {
       signal: AbortSignal.timeout(30000)
     });
 
-    if (!response.ok) {
-      throw new Error(`OpenAI API request failed (${response.status})`);
-    }
+    if (!response.ok) throw await createOpenAIError(response);
     const data = await response.json();
     const answer = extractOutputText(data);
     if (!answer) throw new Error('OpenAI API returned an empty response');
@@ -64,5 +88,4 @@ class MiraiService {
   }
 }
 
-module.exports = { MiraiService, MIRAI_INSTRUCTIONS, extractOutputText };
-
+module.exports = { MiraiService, MIRAI_INSTRUCTIONS, extractOutputText, classifyOpenAIError, createOpenAIError };
