@@ -177,6 +177,17 @@ function createApplication(options = {}) {
       catch { logger.error('conversation.read_failed'); return respondJson(req, res, 503, { error:'会話を取得できませんでした。' }); }
     }
 
+    if (req.method === 'POST' && url.pathname === '/api/conversations') {
+      const session = await requireOwner(req, res, { csrf:true });
+      if (!session) return;
+      if (!conversations) return respondJson(req, res, 503, { error:'会話の保存機能が利用できません。' });
+      if (isRateLimited(req, 'conversation-create', 10)) return respondJson(req, res, 429, { error:'新しい会話の作成が多すぎます。時間をおいてお試しください。' });
+      try {
+        const conversation = await conversations.create(session.user.id);
+        return respondJson(req, res, 201, { conversation });
+      } catch { logger.error('conversation.create_failed'); return respondJson(req, res, 503, { error:'新しい会話を作成できませんでした。' }); }
+    }
+
     const messagesRoute = /^\/api\/conversations\/([^/]+)\/messages$/.exec(url.pathname);
     if (req.method === 'GET' && messagesRoute) {
       const session = await requireOwner(req, res);

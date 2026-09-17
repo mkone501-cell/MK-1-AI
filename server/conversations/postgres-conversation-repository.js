@@ -10,9 +10,19 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 class PostgresConversationRepository {
   constructor(pool) { this.pool = pool; }
 
+  async create(ownerId) {
+    const id = randomUUID();
+    const result = await this.pool.query(
+      'INSERT INTO mirai_conversations (id, owner_id) VALUES ($1, $2) RETURNING id, created_at, updated_at',
+      [id, ownerId]
+    );
+    const row = result.rows[0];
+    return { id:row.id, createdAt:row.created_at, updatedAt:row.updated_at };
+  }
+
   async list(ownerId) {
     const result = await this.pool.query(
-      'SELECT id, created_at, updated_at FROM mirai_conversations WHERE owner_id = $1 ORDER BY updated_at DESC, id DESC LIMIT $2',
+      'SELECT id, created_at, updated_at FROM mirai_conversations WHERE owner_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2',
       [ownerId, CONVERSATION_LIMIT]
     );
     return result.rows.map(row => ({ id:row.id, createdAt:row.created_at, updatedAt:row.updated_at }));

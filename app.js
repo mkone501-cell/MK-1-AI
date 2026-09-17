@@ -46,6 +46,9 @@ let state = loadState();
 let currentRoute = location.hash.replace('#/', '') || 'home';
 let serverConversation = false;
 let activeConversationId = null;
+let conversationLoading = false;
+let newConversationPending = false;
+let conversationGeneration = 0;
 let knowledgeItems = [];
 let editingKnowledgeId = null;
 
@@ -96,7 +99,7 @@ function approvalMini(a) { return `<div class="approval-row"><span class="agent-
 function chart() { return `<div class="report-chart">${[38,48,42,62,58,78,88,76,96].map((h,i)=>`<div class="bar" style="height:${h}%"><span>${i+1}月</span></div>`).join('')}</div>`; }
 function empty(title,text) { return `<div class="empty">◌<b>${title}</b><span>${text}</span></div>`; }
 
-function chatView() { return `<div class="chat-layout"><div class="card chat-card"><div class="chat-header"><span class="agent-icon">✦</span><div><strong>AI秘書 ミライ</strong><small style="display:block;color:var(--muted)"><span class="status-dot"></span>対応できます</small></div></div><div class="messages" id="messages">${state.conversations.map(m=>`<div class="message ${m.role === 'user' ? 'user':''}"><div class="bubble">${safe(m.text)}</div></div>`).join('')}</div><form class="composer" id="chat-form"><textarea id="chat-input" placeholder="ミライに相談する…" aria-label="メッセージ" required></textarea><button type="submit" aria-label="送信">➤</button></form></div>
+function chatView() { const waiting=conversationLoading || newConversationPending; return `<div class="chat-layout"><div class="card chat-card"><div class="chat-header"><span class="agent-icon">✦</span><div><strong>AI秘書 ミライ</strong><small style="display:block;color:var(--muted)"><span class="status-dot"></span>対応できます</small></div>${serverConversation ? `<button class="secondary" type="button" id="new-conversation" ${waiting ? 'disabled' : ''}>＋ 新しい会話</button>` : ''}</div><div class="messages" id="messages">${state.conversations.map(m=>`<div class="message ${m.role === 'user' ? 'user':''}"><div class="bubble">${safe(m.text)}</div></div>`).join('')}${serverConversation && !state.conversations.length ? '<div class="empty">新しい会話です。ミライへ質問してください。</div>' : ''}</div><form class="composer" id="chat-form"><textarea id="chat-input" placeholder="ミライに相談する…" aria-label="メッセージ" ${waiting ? 'disabled' : ''} required></textarea><button type="submit" aria-label="送信" ${waiting ? 'disabled' : ''}>➤</button></form></div>
   <div class="card suggestions"><h3>相談の例</h3><p style="font-size:12px;color:var(--muted)">押すと入力できます。</p>${['今月の広告結果はどう？','新しい広告動画を3案作って','Instagram広告を考えて','今、何を承認すればいい？'].map(x=>`<button data-suggestion="${x}">${x}</button>`).join('')}<div class="notice" style="margin-top:20px">ミライは提案と下書きを作ります。広告費の使用や外部公開は、代表の承認なしに実行しません。</div></div></div>`; }
 function projectsView() { return `<div class="page-head"><div><h2>案件一覧</h2><p>クライアントごとの仕事と進み具合を確認できます。</p></div><button class="primary" id="new-project">＋ 新しい案件（準備中）</button></div><div class="card table-card"><table><thead><tr><th>クライアント / 案件</th><th>目的</th><th>進み具合</th><th>状態</th><th></th></tr></thead><tbody>${state.projects.map(p=>{const c=state.clients.find(c=>c.id===p.clientId);return `<tr><td><span class="client-badge">NS</span><strong>${safe(c.name)}</strong><br><small>${safe(p.name)}</small></td><td>${safe(p.goal)}</td><td><div class="progress" style="width:120px"><i style="width:${p.progress}%"></i></div><small>${p.progress}%</small></td><td>${statusPill(p.status)}</td><td><button class="secondary" data-project="${p.id}">詳細を見る</button></td></tr>`}).join('')}</tbody></table></div>`; }
 function projectDetail(id) { const p=state.projects.find(x=>x.id===id)||state.projects[0], c=state.clients.find(x=>x.id===p.clientId); return `<div class="page-head"><div><button class="link-button" data-route="projects">← 案件一覧</button><h2>${safe(p.name)}</h2><p>${safe(c.name)} ・ ${safe(p.goal)}</p></div>${statusPill(p.status)}</div><div class="metrics">${metricCard('進み具合',`${p.progress}%`,'計画どおり進行中','◎')}${metricCard('作業中',`${state.tasks.filter(x=>x.status==='作業中').length}件`,'AIチームが対応中','✦')}${metricCard('広告案',`${state.adPlans.length}案`,'1案が承認待ち','◇')}${metricCard('今月の売上',yen(state.salesMetrics[0].revenue),'前月比 18.4%','¥')}</div><div class="dashboard-grid"><div class="card"><div class="section-head"><h3>この案件の作業</h3></div>${state.tasks.map(taskRow).join('')}</div><div class="card"><h3>案件情報</h3><p><small>クライアント</small><br><strong>${safe(c.name)}</strong></p><p><small>開始日</small><br><strong>${p.startedAt}</strong></p><p><small>目標</small><br><strong>${safe(p.goal)}</strong></p></div></div>`; }
@@ -152,7 +155,9 @@ async function requestMirai(message) {
 }
 
 async function handleChat(text) {
+  if (conversationLoading || newConversationPending) return;
   const msg = text.trim(); if (!msg) return;
+  const generation = conversationGeneration;
   state.conversations.push({ id:`msg-${Date.now()}`, role:'user', text:msg, createdAt:new Date().toISOString() });
   saveState(); render();
   let result;
@@ -161,6 +166,7 @@ async function handleChat(text) {
     if (!serverConversation) result = demoChatResult(msg);
     else result = { answer:'会話を保存できませんでした。時間をおいてもう一度お試しください。' };
   }
+  if (generation !== conversationGeneration) return;
   if (serverConversation && result.conversationId) activeConversationId = result.conversationId;
   if (result.mode === 'demo' && !result.task) result.task = demoChatResult(msg).task;
   if (result.task) state.tasks.unshift(result.task);
@@ -168,8 +174,28 @@ async function handleChat(text) {
   saveState(); render();
 }
 
+async function startNewConversation() {
+  if (!serverConversation || conversationLoading || newConversationPending) return;
+  newConversationPending = true;
+  render();
+  try {
+    const response = await fetch('api/conversations', { method:'POST' });
+    if (!response.ok) throw new Error('conversation creation failed');
+    const result = await response.json();
+    if (!result.conversation?.id) throw new Error('missing conversation ID');
+    conversationGeneration++;
+    activeConversationId = result.conversation.id;
+    state.conversations = [];
+    saveState();
+    showToast('新しい会話を開始しました。過去の会話は保存されています。');
+  } catch { showToast('新しい会話を作成できませんでした。'); }
+  finally { newConversationPending = false; render(); }
+}
+
 window.addEventListener('mk1:authenticated', async () => {
   serverConversation = true;
+  conversationLoading = true;
+  conversationGeneration++;
   loadKnowledge();
   state.conversations = [];
   activeConversationId = null;
@@ -188,6 +214,7 @@ window.addEventListener('mk1:authenticated', async () => {
     state.conversations = data.messages.map(item => ({ id:item.id, role:item.role, text:item.content, createdAt:item.createdAt }));
     render();
   } catch { showToast('保存済みの会話を読み込めませんでした。'); }
+  finally { conversationLoading = false; render(); }
 });
 async function loadKnowledge() {
   try {
@@ -211,6 +238,7 @@ async function saveKnowledge(form) {
 function decideApproval(id, decision) { const a=state.approvals.find(x=>x.id===id); if(!a)return; a.status=decision; a.decidedAt=new Date().toISOString(); state.auditLog.unshift({ id:`log-${Date.now()}`, actor:state.settings.ownerName, action:decision, target:a.title, createdAt:a.decidedAt }); saveState(); showToast(`${a.title}を「${decision}」として記録しました。`); render(); }
 
 document.addEventListener('click', e => {
+  if(e.target.closest('#new-conversation')) startNewConversation();
   const route=e.target.closest('[data-route]')?.dataset.route; if(route) routeTo(route);
   const project=e.target.closest('[data-project]')?.dataset.project; if(project) routeTo(`project/${project}`);
   const approval=e.target.closest('[data-approval]'); if(approval) decideApproval(approval.dataset.approval, approval.dataset.decision);
