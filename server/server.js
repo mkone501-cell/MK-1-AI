@@ -172,7 +172,8 @@ function createApplication(options = {}) {
         return respondJson(req, res, 200, await mirai.reply({ message, history }));
       } catch (error) {
         const status = error.statusCode || 502;
-        logger.error('mirai.request_failed', { status });
+        const diagnostic = error.providerStatus ? { status, providerStatus: error.providerStatus, category: error.providerCategory || 'unknown' } : { status };
+        logger.error('mirai.request_failed', diagnostic);
         return respondJson(req, res, status, { error: status === 502 ? 'ミライとの通信に失敗しました。時間をおいてお試しください。' : 'リクエストを確認できませんでした。' });
       }
     }
