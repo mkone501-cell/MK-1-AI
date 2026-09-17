@@ -44,13 +44,15 @@ const navItems = [
 
 let state = loadState();
 let currentRoute = location.hash.replace('#/', '') || 'home';
+let serverConversation = false;
+let activeConversationId = null;
 
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function loadState() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || clone(initialState); }
   catch { return clone(initialState); }
 }
-function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(serverConversation ? { ...state, conversations:clone(initialState.conversations) } : state)); }
 function yen(value) { return `¥${Number(value).toLocaleString('ja-JP')}`; }
 function safe(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => ({
@@ -132,7 +134,7 @@ async function requestMirai(message) {
   const response = await fetch('api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, history })
+    body: JSON.stringify(serverConversation ? { message, ...(activeConversationId ? { conversationId:activeConversationId } : {}) } : { message, history })
   });
   if (!response.ok) throw new Error(`Mirai backend unavailable (${response.status})`);
   const result = await response.json();
@@ -146,12 +148,37 @@ async function handleChat(text) {
   saveState(); render();
   let result;
   try { result = await requestMirai(msg); }
-  catch { result = demoChatResult(msg); }
+  catch {
+    if (!serverConversation) result = demoChatResult(msg);
+    else result = { answer:'会話を保存できませんでした。時間をおいてもう一度お試しください。' };
+  }
+  if (serverConversation && result.conversationId) activeConversationId = result.conversationId;
   if (result.mode === 'demo' && !result.task) result.task = demoChatResult(msg).task;
   if (result.task) state.tasks.unshift(result.task);
   state.conversations.push({ id:`msg-${Date.now()+1}`, role:'assistant', text:result.answer, createdAt:new Date().toISOString() });
   saveState(); render();
 }
+
+window.addEventListener('mk1:authenticated', async () => {
+  serverConversation = true;
+  state.conversations = [];
+  activeConversationId = null;
+  saveState();
+  render();
+  try {
+    const listResponse = await fetch('api/conversations', { credentials:'same-origin', cache:'no-store' });
+    if (!listResponse.ok) throw new Error('conversation list unavailable');
+    const list = await listResponse.json();
+    const latest = list.conversations[0];
+    if (!latest) return;
+    const response = await fetch(`api/conversations/${latest.id}/messages`, { credentials:'same-origin', cache:'no-store' });
+    if (!response.ok) throw new Error('conversation unavailable');
+    const data = await response.json();
+    activeConversationId = latest.id;
+    state.conversations = data.messages.map(item => ({ id:item.id, role:item.role, text:item.content, createdAt:item.createdAt }));
+    render();
+  } catch { showToast('保存済みの会話を読み込めませんでした。'); }
+});
 function decideApproval(id, decision) { const a=state.approvals.find(x=>x.id===id); if(!a)return; a.status=decision; a.decidedAt=new Date().toISOString(); state.auditLog.unshift({ id:`log-${Date.now()}`, actor:state.settings.ownerName, action:decision, target:a.title, createdAt:a.decidedAt }); saveState(); showToast(`${a.title}を「${decision}」として記録しました。`); render(); }
 
 document.addEventListener('click', e => {

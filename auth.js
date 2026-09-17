@@ -37,6 +37,7 @@
       if (!response.ok) return;
       Object.assign(auth, await response.json());
       if (auth.configured && !auth.authenticated) showLogin();
+      if (auth.authenticated && auth.conversationStorage) window.dispatchEvent(new Event('mk1:authenticated'));
     } catch {
       // GitHub Pagesには認証バックエンドがないため、従来の公開デモを維持します。
     }
@@ -57,6 +58,7 @@
       if (!response.ok) return showLogin(result.error || 'ログインできませんでした。');
       Object.assign(auth, result);
       layer().innerHTML = '';
+      if (auth.conversationStorage) window.dispatchEvent(new Event('mk1:authenticated'));
     } catch {
       showLogin('認証サーバーへ接続できませんでした。');
     }

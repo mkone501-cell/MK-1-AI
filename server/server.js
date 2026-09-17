@@ -10,6 +10,9 @@ const { createSessionStore } = require('./session-store-factory');
 const { createAuthGuard } = require('./auth-guard');
 const { createLogger } = require('./safe-logger');
 const { migrateSessions } = require('./session-stores/migrate-sessions');
+const { PostgresConversationRepository, UUID } = require('./conversations/postgres-conversation-repository');
+const { migrateConversations } = require('./conversations/migrate-conversations');
+const { containsSecret } = require('./conversations/secret-filter');
 
 const ROOT = path.resolve(__dirname, '..');
 const MAX_BODY_BYTES = 32 * 1024;
@@ -67,6 +70,7 @@ function createApplication(options = {}) {
   const logger = options.logger || createLogger();
   const auth = options.auth || new AuthService({ ownerEmail: config.owner.email, passwordHash: config.owner.passwordHash });
   const sessions = options.sessions || createSessionStore(config, { sessionRepository: options.sessionRepository });
+  const conversations = options.conversations || (config.session.driver === 'database' && sessions.repository?.pool ? new PostgresConversationRepository(sessions.repository.pool) : null);
   const mirai = options.mirai || new MiraiService({
     // 認証未設定のサーバーから有料APIを利用しない安全弁です。
     apiKey: auth.configured ? config.openai.apiKey : '',
@@ -131,7 +135,8 @@ function createApplication(options = {}) {
         configured: auth.configured,
         authenticated: Boolean(current),
         user: current ? current.session.user : null,
-        csrfToken: current ? current.session.csrfToken : null
+        csrfToken: current ? current.session.csrfToken : null,
+        conversationStorage: Boolean(conversations)
       });
     }
 
@@ -144,7 +149,7 @@ function createApplication(options = {}) {
         const user = await auth.authenticate(body.email, body.password);
         if (!user) return respondJson(req, res, 401, { error: 'メールアドレスまたはパスワードが違います。' });
         const { token, session } = await sessions.create(user);
-        return respondJson(req, res, 200, { authenticated: true, user, csrfToken: session.csrfToken }, { 'Set-Cookie': sessions.cookie(token) });
+        return respondJson(req, res, 200, { authenticated: true, user, csrfToken: session.csrfToken, conversationStorage:Boolean(conversations) }, { 'Set-Cookie': sessions.cookie(token) });
       } catch (error) {
         logger.warn('auth.login_failed');
         return respondJson(req, res, error.statusCode || 400, { error: 'ログイン情報を確認できませんでした。' });
@@ -159,6 +164,26 @@ function createApplication(options = {}) {
       return respondJson(req, res, 200, { authenticated: false }, { 'Set-Cookie': sessions.clearCookie() });
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/conversations') {
+      const session = await requireOwner(req, res);
+      if (!session) return;
+      if (!conversations) return respondJson(req, res, 503, { error: '会話の保存機能が利用できません。' });
+      try { return respondJson(req, res, 200, { conversations:await conversations.list(session.user.id) }); }
+      catch { logger.error('conversation.read_failed'); return respondJson(req, res, 503, { error:'会話を取得できませんでした。' }); }
+    }
+
+    const messagesRoute = /^\/api\/conversations\/([^/]+)\/messages$/.exec(url.pathname);
+    if (req.method === 'GET' && messagesRoute) {
+      const session = await requireOwner(req, res);
+      if (!session) return;
+      if (!UUID.test(messagesRoute[1])) return respondJson(req, res, 400, { error:'会話IDが正しくありません。' });
+      if (!conversations) return respondJson(req, res, 503, { error:'会話の保存機能が利用できません。' });
+      try {
+        if (!await conversations.exists(session.user.id, messagesRoute[1])) return respondJson(req, res, 404, { error:'会話が見つかりません。' });
+        return respondJson(req, res, 200, { messages:await conversations.messages(session.user.id, messagesRoute[1]) });
+      } catch { logger.error('conversation.read_failed'); return respondJson(req, res, 503, { error:'会話を取得できませんでした。' }); }
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/chat') {
       if (!requestOriginAllowed(req, config)) return respondJson(req, res, 403, { error: 'この画面からミライをご利用ください。' });
       const session = await requireOwner(req, res, { csrf: auth.configured, allowSetupMode: !config.production });
@@ -168,6 +193,30 @@ function createApplication(options = {}) {
         const body = await readJson(req);
         const message = typeof body.message === 'string' ? body.message.trim() : '';
         if (!message || message.length > 8000) return respondJson(req, res, 400, { error: 'メッセージは1文字以上8,000文字以内で入力してください。' });
+        if (session.user && conversations) {
+          const id = body.conversationId;
+          if (id !== undefined && (typeof id !== 'string' || !UUID.test(id))) return respondJson(req, res, 400, { error:'会話IDが正しくありません。' });
+          if (containsSecret(message, config, req)) return respondJson(req, res, 400, { error:'認証情報を含むメッセージは送信できません。' });
+          let history = [];
+          try {
+            if (id) {
+              history = await conversations.context(session.user.id, id);
+              if (!history) return respondJson(req, res, 404, { error:'会話が見つかりません。' });
+            }
+          } catch { logger.error('conversation.read_failed'); return respondJson(req, res, 503, { error:'会話を取得できませんでした。' }); }
+          const result = await mirai.reply({ message, history });
+          if (typeof result.answer !== 'string' || containsSecret(result.answer, config, req)) {
+            logger.error('conversation.answer_rejected');
+            return respondJson(req, res, 502, { error:'ミライの回答を安全に保存できませんでした。' });
+          }
+          try {
+            const conversationId = await conversations.appendExchange({ ownerId:session.user.id, conversationId:id, message, answer:result.answer });
+            return respondJson(req, res, 200, { ...result, conversationId });
+          } catch {
+            logger.error('conversation.save_failed');
+            return respondJson(req, res, 503, { error:'会話を保存できませんでした。時間をおいてお試しください。' });
+          }
+        }
         const history = Array.isArray(body.history) ? body.history : [];
         return respondJson(req, res, 200, await mirai.reply({ message, history }));
       } catch (error) {
@@ -195,7 +244,7 @@ function createApplication(options = {}) {
     respondJson(req, res, 404, { error: '見つかりません。' });
   }
 
-  return { handler, auth, sessions, mirai, config };
+  return { handler, auth, sessions, conversations, mirai, config };
 }
 
 function createServer(options = {}) {
@@ -214,9 +263,10 @@ async function start(options = {}) {
   }
   if (app.config.session.driver === 'database') {
     await migrateSessions(app.sessions.repository);
+    await migrateConversations(app.conversations);
     await app.sessions.repository.check();
   }
-  const server = createServer({ ...options, config: app.config, auth: app.auth, sessions: app.sessions, mirai: app.mirai });
+  const server = createServer({ ...options, config: app.config, auth: app.auth, sessions: app.sessions, conversations: app.conversations, mirai: app.mirai });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(app.config.port, '0.0.0.0', resolve); });
   console.log(`MK-1 AI経営本部: ポート ${server.address().port} で起動しました。`);
   return server;
