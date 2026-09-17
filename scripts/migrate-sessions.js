@@ -4,6 +4,7 @@ const { loadConfig } = require('../server/config');
 const { createPostgresSessionRepository } = require('../server/session-stores/postgres-session-repository');
 const { migrateSessions } = require('../server/session-stores/migrate-sessions');
 const { migrateConversations } = require('../server/conversations/migrate-conversations');
+const { migrateKnowledge } = require('../server/knowledge/migrate-knowledge');
 
 async function main() {
   const config = loadConfig();
@@ -11,8 +12,9 @@ async function main() {
   try {
     await migrateSessions(repository);
     await migrateConversations(repository);
+    await migrateKnowledge(repository);
     await repository.check();
-    console.log('セッションと会話用テーブルを確認しました。');
+    console.log('セッション・会話・経営知識用テーブルを確認しました。');
   } finally { await repository.close(); }
 }
 

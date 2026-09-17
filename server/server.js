@@ -13,6 +13,10 @@ const { migrateSessions } = require('./session-stores/migrate-sessions');
 const { PostgresConversationRepository, UUID } = require('./conversations/postgres-conversation-repository');
 const { migrateConversations } = require('./conversations/migrate-conversations');
 const { containsSecret } = require('./conversations/secret-filter');
+const { PostgresKnowledgeRepository } = require('./knowledge/postgres-knowledge-repository');
+const { migrateKnowledge } = require('./knowledge/migrate-knowledge');
+const { validateKnowledge } = require('./knowledge/validation');
+const { knowledgeContext } = require('./knowledge/context');
 
 const ROOT = path.resolve(__dirname, '..');
 const MAX_BODY_BYTES = 32 * 1024;
@@ -71,6 +75,7 @@ function createApplication(options = {}) {
   const auth = options.auth || new AuthService({ ownerEmail: config.owner.email, passwordHash: config.owner.passwordHash });
   const sessions = options.sessions || createSessionStore(config, { sessionRepository: options.sessionRepository });
   const conversations = options.conversations || (config.session.driver === 'database' && sessions.repository?.pool ? new PostgresConversationRepository(sessions.repository.pool) : null);
+  const knowledge = options.knowledge || (config.session.driver === 'database' && sessions.repository?.pool ? new PostgresKnowledgeRepository(sessions.repository.pool) : null);
   const mirai = options.mirai || new MiraiService({
     // 認証未設定のサーバーから有料APIを利用しない安全弁です。
     apiKey: auth.configured ? config.openai.apiKey : '',
@@ -114,7 +119,7 @@ function createApplication(options = {}) {
     }
 
     if (req.method === 'OPTIONS' && url.pathname.startsWith('/api/')) {
-      res.writeHead(204, securityHeaders({ ...corsHeaders(req), 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token', 'Access-Control-Max-Age': '600' }));
+      res.writeHead(204, securityHeaders({ ...corsHeaders(req), 'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token', 'Access-Control-Max-Age': '600' }));
       return res.end();
     }
 
@@ -184,6 +189,37 @@ function createApplication(options = {}) {
       } catch { logger.error('conversation.read_failed'); return respondJson(req, res, 503, { error:'会話を取得できませんでした。' }); }
     }
 
+    const knowledgeRoute = /^\/api\/knowledge\/([^/]+)(\/disable)?$/.exec(url.pathname);
+    if (url.pathname === '/api/knowledge' || knowledgeRoute) {
+      const writing = req.method === 'PUT' || req.method === 'POST';
+      if (req.method !== 'GET' && !writing) return respondJson(req, res, 405, { error:'この操作は利用できません。' });
+      const session = await requireOwner(req, res, { csrf:writing });
+      if (!session) return;
+      if (!knowledge) return respondJson(req, res, 503, { error:'経営知識の保存機能が利用できません。' });
+      if (knowledgeRoute && !UUID.test(knowledgeRoute[1])) return respondJson(req, res, 400, { error:'知識IDが正しくありません。' });
+      if (writing && isRateLimited(req, 'knowledge', 10)) return respondJson(req, res, 429, { error:'操作が多すぎます。時間をおいてお試しください。' });
+      try {
+        const ownerId = session.user.id;
+        if (req.method === 'GET' && !knowledgeRoute) return respondJson(req, res, 200, { knowledge:await knowledge.list(ownerId) });
+        if (req.method === 'GET' && knowledgeRoute && !knowledgeRoute[2]) {
+          const item = await knowledge.get(ownerId, knowledgeRoute[1]);
+          return respondJson(req, res, item ? 200 : 404, item ? { knowledge:item } : { error:'知識が見つかりません。' });
+        }
+        const body = await readJson(req);
+        if (knowledgeRoute?.[2]) {
+          if (req.method !== 'POST' || body.confirmed !== true) return respondJson(req, res, 400, { error:'無効化には本人の明示的な確認が必要です。' });
+          const item = await knowledge.disable(ownerId, knowledgeRoute[1]);
+          return respondJson(req, res, item ? 200 : 404, item ? { knowledge:item } : { error:'知識が見つかりません。' });
+        }
+        if ((req.method === 'POST' && knowledgeRoute) || (req.method === 'PUT' && !knowledgeRoute)) return respondJson(req, res, 405, { error:'この操作は利用できません。' });
+        const value = validateKnowledge(body, config, req);
+        if (value === 'secret') return respondJson(req, res, 400, { error:'認証情報の可能性がある内容は登録できません。' });
+        if (!value) return respondJson(req, res, 400, { error:'カテゴリ・タイトル・本文・情報源と確認が必要です。' });
+        const item = knowledgeRoute ? await knowledge.update(ownerId, knowledgeRoute[1], value) : await knowledge.create(ownerId, value);
+        return respondJson(req, res, item ? knowledgeRoute ? 200 : 201 : 404, item ? { knowledge:item } : { error:'知識が見つかりません。' });
+      } catch { logger.error('knowledge.request_failed'); return respondJson(req, res, 503, { error:'経営知識を処理できませんでした。時間をおいてお試しください。' }); }
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/chat') {
       if (!requestOriginAllowed(req, config)) return respondJson(req, res, 403, { error: 'この画面からミライをご利用ください。' });
       const session = await requireOwner(req, res, { csrf: auth.configured, allowSetupMode: !config.production });
@@ -204,7 +240,17 @@ function createApplication(options = {}) {
               if (!history) return respondJson(req, res, 404, { error:'会話が見つかりません。' });
             }
           } catch { logger.error('conversation.read_failed'); return respondJson(req, res, 503, { error:'会話を取得できませんでした。' }); }
-          const result = await mirai.reply({ message, history });
+          let selectedKnowledge = [];
+          if (knowledge) {
+            try {
+              const matches = await knowledge.relevant(session.user.id, message);
+              selectedKnowledge = knowledgeContext(matches.filter(item => {
+                const checked = validateKnowledge({ ...item, confirmed:true }, config, req);
+                return checked && checked !== 'secret';
+              }));
+            } catch { logger.error('knowledge.search_failed'); return respondJson(req, res, 503, { error:'経営情報を確認できませんでした。時間をおいてお試しください。' }); }
+          }
+          const result = await mirai.reply({ message, history, knowledge:selectedKnowledge });
           if (typeof result.answer !== 'string' || containsSecret(result.answer, config, req)) {
             logger.error('conversation.answer_rejected');
             return respondJson(req, res, 502, { error:'ミライの回答を安全に保存できませんでした。' });
@@ -244,7 +290,7 @@ function createApplication(options = {}) {
     respondJson(req, res, 404, { error: '見つかりません。' });
   }
 
-  return { handler, auth, sessions, conversations, mirai, config };
+  return { handler, auth, sessions, conversations, knowledge, mirai, config };
 }
 
 function createServer(options = {}) {
@@ -264,9 +310,10 @@ async function start(options = {}) {
   if (app.config.session.driver === 'database') {
     await migrateSessions(app.sessions.repository);
     await migrateConversations(app.conversations);
+    await migrateKnowledge(app.knowledge);
     await app.sessions.repository.check();
   }
-  const server = createServer({ ...options, config: app.config, auth: app.auth, sessions: app.sessions, conversations: app.conversations, mirai: app.mirai });
+  const server = createServer({ ...options, config: app.config, auth: app.auth, sessions: app.sessions, conversations: app.conversations, knowledge: app.knowledge, mirai: app.mirai });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(app.config.port, '0.0.0.0', resolve); });
   console.log(`MK-1 AI経営本部: ポート ${server.address().port} で起動しました。`);
   return server;
