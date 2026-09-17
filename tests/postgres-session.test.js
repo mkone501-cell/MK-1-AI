@@ -76,7 +76,8 @@ test('初回起動時に安全なmigrationとDB確認を終えてからPORTで�
   const server = await start({ config:{ ...config, port:0 }, sessionRepository:repo });
   try {
     assert.match(pool.calls[0].sql, /CREATE TABLE IF NOT EXISTS/);
-    assert.equal(pool.calls[1].sql, 'SELECT 1');
+    assert.match(pool.calls[1].sql, /CREATE TABLE IF NOT EXISTS mirai_conversations/);
+    assert.equal(pool.calls[2].sql, 'SELECT 1');
     assert.ok(server.address().port > 0);
   } finally { await new Promise(resolve => server.close(resolve)); }
 });

@@ -3,14 +3,16 @@
 const { loadConfig } = require('../server/config');
 const { createPostgresSessionRepository } = require('../server/session-stores/postgres-session-repository');
 const { migrateSessions } = require('../server/session-stores/migrate-sessions');
+const { migrateConversations } = require('../server/conversations/migrate-conversations');
 
 async function main() {
   const config = loadConfig();
   const repository = createPostgresSessionRepository(config.database.url, { sslCa: config.database.sslCa });
   try {
     await migrateSessions(repository);
+    await migrateConversations(repository);
     await repository.check();
-    console.log('セッション用テーブルを確認しました。');
+    console.log('セッションと会話用テーブルを確認しました。');
   } finally { await repository.close(); }
 }
 
