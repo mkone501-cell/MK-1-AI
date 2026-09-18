@@ -56,6 +56,15 @@ main { min-width: 0; }.topbar { height: 90px; padding: 20px 34px; display: flex;
 .agents-grid, .ads-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }.agent-card h3 { margin: 12px 0 7px; }.agent-card p { min-height: 42px; color: var(--muted); font-size: 12px; line-height: 1.6; }.agent-card .agent-icon { font-size: 20px; width: 46px; height: 46px; }
 .ad-preview { aspect-ratio: 16/9; border-radius: 11px; background: linear-gradient(135deg,#1c332d,#74513a); color: #fff; display: grid; place-items: center; text-align: center; padding: 20px; margin-bottom: 15px; }.ad-preview b { font-family: Georgia, serif; font-size: 22px; }.ad-row { align-items: start; flex-direction: column; }
 .approval-detail { display: grid; grid-template-columns: 48px 1fr auto; gap: 14px; align-items: start; }.approval-detail + .approval-detail { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 18px; }
+.knowledge-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; align-items: start; padding: 18px 0; }
+.knowledge-item + .knowledge-item { border-top: 1px solid var(--line); }
+.knowledge-content { min-width: 0; overflow-wrap: anywhere; }
+.knowledge-content h3 { margin: 8px 0; line-height: 1.5; }
+.knowledge-content small { color: var(--muted); }
+.knowledge-body { margin: 10px 0; line-height: 1.8; white-space: pre-wrap; }
+.knowledge-source { display: block; line-height: 1.6; }
+.knowledge-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+@media (max-width: 640px) { .knowledge-item { grid-template-columns: minmax(0, 1fr); gap: 12px; }.knowledge-actions { justify-content: flex-start; } }
 .empty { text-align: center; padding: 50px 20px; color: var(--muted); }.empty b { display: block; color: var(--ink); margin: 10px; }
 .report-chart { height: 180px; display: flex; gap: 12px; align-items: end; border-bottom: 1px solid var(--line); padding: 20px; }.bar { flex: 1; background: #8fbaa3; border-radius: 6px 6px 0 0; min-width: 20px; position: relative; }.bar span { position: absolute; bottom: -22px; font-size: 9px; color: var(--muted); left: 50%; transform: translateX(-50%); }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }.field label { display: block; font-size: 12px; font-weight: 700; margin-bottom: 7px; }.field input, .field select { width: 100%; padding: 11px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }.notice { border-left: 4px solid var(--amber); background: var(--amber-soft); padding: 14px; border-radius: 8px; font-size: 12px; line-height: 1.6; }

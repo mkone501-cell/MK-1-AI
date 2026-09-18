@@ -9,7 +9,7 @@ const stub = () => ({ innerHTML: '', textContent: '', classList: { add(){}, remo
 global.document = { querySelector: stub, createElement: stub, addEventListener(name, handler){ listeners[name] = handler; } };
 global.window = { addEventListener(){} };
 
-const { initialState, clone, safe, demoChatResult, knowledgeView, APP_VERSION } = require('../app.js');
+const { initialState, clone, safe, demoChatResult, knowledgeView, knowledgeItemView, APP_VERSION } = require('../app.js');
 
 test('Ver.0.1として起動する', () => assert.equal(APP_VERSION, '0.1.0'));
 
@@ -82,4 +82,23 @@ test('知識確認ボタンは登録フォームの必須チェックと送信�
     global.fetch = originalFetch;
     global.setTimeout = originalTimeout;
   }
+});
+
+test('登録済み知識はアイコン用の固定幅列を使わず本文と操作を配置する', () => {
+  const item = { id:'test-id', category:'店舗', title:'NORTH STAR BEANSの店舗情報',
+    body:'日本語の長い説明文。'.repeat(30), source:'本人確認', active:true };
+  const html = knowledgeItemView(item);
+  assert.doesNotMatch(html, /approval-detail|row-main/);
+  assert.match(html, /class="knowledge-content"/);
+  assert.match(html, /class="knowledge-actions"/);
+  for (const value of [item.category, item.title, item.body, item.source]) assert.ok(html.includes(value));
+  assert.match(html, /type="button" data-knowledge-edit="test-id"/);
+  assert.match(html, /type="button" data-knowledge-disable="test-id"/);
+  assert.doesNotMatch(knowledgeItemView({ ...item, active:false }), /data-knowledge-(?:edit|disable)/);
+  assert.ok(knowledgeItemView({ ...item, title:'<script>test</script>' }).includes('&lt;script&gt;'));
+
+  const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../styles.css'), 'utf8');
+  assert.match(css, /\.knowledge-item\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto/);
+  assert.match(css, /\.knowledge-content\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere/);
+  assert.match(css, /@media\s*\(max-width:\s*640px\)\s*\{\s*\.knowledge-item\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/);
 });
