@@ -99,6 +99,15 @@ function createApplication(options = {}) {
 
   const requireOwner = createAuthGuard({ auth, sessions, sendJson: respondJson });
 
+  async function selectKnowledge(ownerId, message, req) {
+    if (!knowledge) return { context:[], matches:[] };
+    const matches = (await knowledge.relevant(ownerId, message)).filter(item => {
+      const checked = validateKnowledge({ ...item, confirmed:true }, config, req);
+      return checked && checked !== 'secret';
+    });
+    return { context:knowledgeContext(matches), matches };
+  }
+
   function isRateLimited(req, scope = 'general', limit = RATE_LIMIT) {
     const key = `${scope}:${req.socket.remoteAddress || 'unknown'}`;
     const now = Date.now();
@@ -200,6 +209,25 @@ function createApplication(options = {}) {
       } catch { logger.error('conversation.read_failed'); return respondJson(req, res, 503, { error:'会話を取得できませんでした。' }); }
     }
 
+    if (url.pathname === '/api/knowledge/preview') {
+      if (req.method !== 'POST') return respondJson(req, res, 405, { error:'この操作は利用できません。' });
+      if (!requestOriginAllowed(req, config)) return respondJson(req, res, 403, { error:'この画面からご利用ください。' });
+      const session = await requireOwner(req, res, { csrf:true });
+      if (!session) return;
+      if (!knowledge) return respondJson(req, res, 503, { error:'経営知識の検索機能が利用できません。' });
+      if (isRateLimited(req, 'knowledge-preview', 20)) return respondJson(req, res, 429, { error:'検索回数が多すぎます。時間をおいてお試しください。' });
+      try {
+        const body = await readJson(req);
+        const question = typeof body.question === 'string' ? body.question.trim() : '';
+        if (!question || question.length > 8000) return respondJson(req, res, 400, { error:'質問を入力してください。' });
+        if (containsSecret(question, config, req)) return respondJson(req, res, 400, { error:'認証情報を含む質問は検索できません。' });
+        const selected = await selectKnowledge(session.user.id, question, req);
+        return respondJson(req, res, 200, { knowledge:selected.context.map((item, index) => ({
+          id:selected.matches[index].id, category:item.category, title:item.title
+        })) });
+      } catch { logger.error('knowledge.preview_failed'); return respondJson(req, res, 503, { error:'経営知識を検索できませんでした。' }); }
+    }
+
     const knowledgeRoute = /^\/api\/knowledge\/([^/]+)(\/disable)?$/.exec(url.pathname);
     if (url.pathname === '/api/knowledge' || knowledgeRoute) {
       const writing = req.method === 'PUT' || req.method === 'POST';
@@ -254,11 +282,7 @@ function createApplication(options = {}) {
           let selectedKnowledge = [];
           if (knowledge) {
             try {
-              const matches = await knowledge.relevant(session.user.id, message);
-              selectedKnowledge = knowledgeContext(matches.filter(item => {
-                const checked = validateKnowledge({ ...item, confirmed:true }, config, req);
-                return checked && checked !== 'secret';
-              }));
+              selectedKnowledge = (await selectKnowledge(session.user.id, message, req)).context;
             } catch { logger.error('knowledge.search_failed'); return respondJson(req, res, 503, { error:'経営情報を確認できませんでした。時間をおいてお試しください。' }); }
           }
           const result = await mirai.reply({ message, history, knowledge:selectedKnowledge });

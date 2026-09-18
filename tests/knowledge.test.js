@@ -31,7 +31,14 @@ function fakePool() {
       let rows = [...data.values()].filter(row => row.owner_id === args[0]);
       if (sql.includes('AND id = $2')) rows = rows.filter(row => row.id === args[1]);
       if (sql.includes('active = TRUE')) rows = rows.filter(row => row.active);
-      if (sql.includes('ILIKE ANY')) rows = rows.filter(row => args[1].some(pattern => [row.title, row.category, row.body].some(value => value.includes(pattern.slice(1, -1)))));
+      if (sql.includes('ILIKE ANY')) {
+        rows = rows.filter(row => args[1].some(pattern => [row.title, row.category, row.body].some(value => value.toLowerCase().includes(pattern.slice(1, -1).toLowerCase()))));
+        if (sql.includes('ORDER BY CASE WHEN category ILIKE ANY')) {
+          const matches = (category, patterns) => patterns.some(pattern => category.toLowerCase().includes(pattern.slice(1, -1).toLowerCase()));
+          rows.sort((a, b) => Number(matches(b.category, args[2])) - Number(matches(a.category, args[2])) ||
+            Number(matches(b.category, args[3])) - Number(matches(a.category, args[3])));
+        }
+      }
       return { rows:rows.slice(0, typeof args.at(-1) === 'number' ? args.at(-1) : 100).map(row => ({ ...row })) };
     }
     return { rows:[] };
@@ -96,7 +103,7 @@ test('複数の店舗・不動産・会社知識から質問に関係するも�
   assert.ok(matches.every(row => row.body !== '他ユーザーの秘密'));
   const call = pool.calls.at(-1);
   assert.equal(call.args[0], 'owner-a');
-  assert.equal(call.args[2], 80);
+  assert.equal(call.args.at(-1), 80);
   assert.match(call.sql, /owner_id = \$1 AND active = TRUE/);
   assert.ok(knowledgeContext(matches).length <= 4);
 });
@@ -119,6 +126,7 @@ test('コーヒー店などの表現から店舗・会社・事業の知識を�
   await repo.create('owner-b', { category:'店舗', title:'他社の店舗', body:'他人の情報', source:'本人確認' });
   for (const question of [
     '私が経営しているコーヒー店について教えてください。',
+    '私の店について教えて', 'うちのカフェについて教えて',
     '私のお店について教えて', 'カフェについて教えて', '店舗について教えて',
     '珈琲店について教えて', 'コーヒーショップについて教えて'
   ]) {
@@ -131,6 +139,28 @@ test('コーヒー店などの表現から店舗・会社・事業の知識を�
     assert.ok(knowledgeContext(matches).length <= 4);
   }
   assert.deepEqual((await repo.relevant('owner-b', '私のコーヒー店について')).map(item => item.body), ['他人の情報']);
+});
+
+test('固有名詞の英語と日本語を分割し、カテゴリがその他でも本人の名称を検索する', async () => {
+  const pool = fakePool(), repo = new PostgresKnowledgeRepository(pool);
+  const brand = await repo.create('owner-a', { category:'その他', title:'NORTH STAR BEANS', body:'北品川で営業、席数30', source:'本人確認' });
+  await repo.create('owner-b', { category:'その他', title:'NORTH STAR BEANS', body:'別ユーザーの記録', source:'本人確認' });
+  const found = await repo.relevant('owner-a', 'NORTH STAR BEANSについて教えて');
+  assert.deepEqual(found.map(item => item.id), [brand.id]);
+  assert.deepEqual(await repo.relevant('owner-a', '無関係な場所について'), []);
+});
+
+test('候補が80件を超えても店舗カテゴリを先に検索し、定型語だけ一致する別件を除く', async () => {
+  const pool = fakePool(), repo = new PostgresKnowledgeRepository(pool);
+  for (let i = 0; i < 90; i++) await repo.create('owner-a', { category:'その他', title:`教えてください ${i}`, body:'内容は別の話題', source:'本人確認' });
+  const store = await repo.create('owner-a', { category:'店舗', title:'NORTH STAR BEANS', body:'北品川の30席の店舗', source:'本人確認' });
+  const found = await repo.relevant('owner-a', '私が経営しているコーヒー店について教えてください');
+  assert.ok(found.some(item => item.id === store.id));
+  assert.ok(found.length <= 4);
+  const call = pool.calls.at(-1);
+  assert.ok(call.args[2].some(pattern => pattern.includes('店舗')));
+  assert.match(call.sql, /ORDER BY CASE WHEN category ILIKE ANY\(\$3::text\[\]\)/);
+  assert.equal(call.args.at(-1), 80);
 });
 
 test('店舗以外の話題にも同じカテゴリ検索を適用する', async () => {
@@ -184,6 +214,37 @@ test('APIは未認証・CSRF不正・他ユーザー・不正IDを拒否し障�
     assert.equal(broken.status, 503);
     assert.doesNotMatch(await broken.text(), /hidden|private-key/);
     assert.doesNotMatch(JSON.stringify(logs), /hidden|private-key/);
+  });
+});
+
+test('本人だけがAI送信なしで検索結果を確認でき、他人の知識と本文を返さない', async () => {
+  const pool = fakePool(), knowledge = new PostgresKnowledgeRepository(pool);
+  await knowledge.create('owner-a', { category:'店舗', title:'NORTH STAR BEANS', body:'北品川で営業', source:'本人確認' });
+  await knowledge.create('owner-b', { category:'店舗', title:'他人のお店', body:'非公開の内容', source:'本人確認' });
+  const sessions = new SessionStore({ secure:false });
+  const owner = await sessions.create({ id:'owner-a', role:'owner' });
+  let providerCalls = 0;
+  const logs = [];
+  await withServer({ sessions, knowledge, auth:{ configured:true, incomplete:false },
+    mirai:{ mode:'openai', reply:async () => { providerCalls++; return { answer:'不要' }; } },
+    logger:{ error:(...args) => logs.push(args) }
+  }, async base => {
+    const request = (person, csrf) => fetch(base + '/api/knowledge/preview', { method:'POST', headers:{
+      ...(person ? { Cookie:`mk1_owner_session=${person.token}`, 'X-CSRF-Token':csrf } : {}), 'Content-Type':'application/json'
+    }, body:JSON.stringify({ question:'私の店について教えて' }) });
+    assert.equal((await request(null)).status, 401);
+    assert.equal((await request(owner, 'wrong')).status, 403);
+    const response = await request(owner, owner.session.csrfToken);
+    assert.equal(response.status, 200);
+    const found = await response.json();
+    assert.deepEqual(found.knowledge.map(item => item.title), ['NORTH STAR BEANS']);
+    assert.doesNotMatch(JSON.stringify(found), /北品川で営業|他人のお店|非公開の内容/);
+    assert.equal(providerCalls, 0);
+    pool.query = async () => { throw new Error('postgresql://user:private-password@host/db'); };
+    const broken = await request(owner, owner.session.csrfToken);
+    assert.equal(broken.status, 503);
+    assert.doesNotMatch(await broken.text(), /private-password/);
+    assert.doesNotMatch(JSON.stringify(logs), /private-password/);
   });
 });
 
