@@ -4,7 +4,7 @@ const { containsSecret } = require('../conversations/secret-filter');
 const { searchPatterns } = require('./retrieval');
 
 // 登録前に本文だけでなく、タイトル・カテゴリ・情報源も同様に検査する。
-const credentialHint = /(?:api[_ -]?key|password|passwd|パスワード|cookie|クッキー|session[_ -]?(?:id|token)|セッション(?:id|ＩＤ)|authorization|secret[_ -]?key|秘密鍵|private\s+key|bearer|access[_ -]?token|トークン)/i;
+const credentialHint = /(?:api[_ -]?key|apiキー|database[_ -]?url|password|passwd|パスワード|cookie|クッキー|session[_ -]?(?:id|token)|セッション(?:id|ＩＤ)|authorization|secret[_ -]?key|秘密鍵|private\s+key|bearer|access[_ -]?token|トークン)/i;
 
 function validateKnowledge(body, config, req) {
   if (!body || typeof body !== 'object' || Array.isArray(body) || body.confirmed !== true) return null;

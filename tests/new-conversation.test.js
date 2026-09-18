@@ -153,3 +153,49 @@ test('新しい会話のDB障害は秘密を返さず、既存データを削除
   });
   assert.equal(pool.conversations.has(oldId), true);
 });
+
+test('会話候補は自動保存せず本人の承認APIだけが所有者に紐付けて保存する', async () => {
+  const pool = poolFixture(), conversations = new PostgresConversationRepository(pool), knowledge = new PostgresKnowledgeRepository(pool);
+  const sessions = new SessionStore({ secure:false });
+  const owner = await sessions.create({ id:'owner-a', role:'owner' });
+  const other = await sessions.create({ id:'owner-b', role:'owner' });
+  const visitor = await sessions.create({ id:'visitor', role:'viewer' });
+  const logs = [];
+  const mirai = { reply:async () => ({ answer:'営業時間を短くすることも提案できます。', memoryCandidates:[{ body:'AIが勝手に出した提案' }] }) };
+  await withServer({ config:loadConfig({ NODE_ENV:'test' }), sessions, conversations, knowledge, mirai,
+    auth:{ configured:true, incomplete:false }, logger:{ error:(...args)=>logs.push(args) } }, async base => {
+    const post = (person, path, body, csrf = person?.session.csrfToken) => fetch(base + path, { method:'POST',
+      headers:{ ...(person ? { Cookie:`mk1_owner_session=${person.token}`, 'X-CSRF-Token':csrf } : {}), 'Content-Type':'application/json' }, body:JSON.stringify(body) });
+    const response = await post(owner, '/api/chat', { message:'木曜日を定休日にする' });
+    assert.equal(response.status, 200);
+    const { memoryCandidates:candidates } = await response.json();
+    assert.equal(candidates.length, 1);
+    assert.equal(candidates[0].body, '木曜日を定休日にする');
+    assert.equal(pool.knowledge.size, 0);
+    const question = await post(owner, '/api/chat', { message:'おすすめの定休日は？' });
+    assert.deepEqual((await question.json()).memoryCandidates, []); // provider proposals never trusted
+    const candidate = candidates[0];
+    assert.equal((await post(null, '/api/knowledge', { ...candidate, confirmed:true })).status, 401);
+    assert.equal((await post(visitor, '/api/knowledge', { ...candidate, confirmed:true })).status, 401);
+    assert.equal((await post(owner, '/api/knowledge', { ...candidate, confirmed:true }, 'invalid')).status, 403);
+    assert.equal((await post(owner, '/api/knowledge', candidate)).status, 400);
+    assert.equal(pool.knowledge.size, 0);
+    assert.equal((await post(owner, '/api/knowledge', { ...candidate, body:'パスワード=example-only', confirmed:true })).status, 400);
+    const saved = await post(owner, '/api/knowledge', { ...candidate, confirmed:true, ownerId:'owner-b' });
+    assert.equal(saved.status, 201);
+    assert.equal(pool.knowledge.size, 1);
+    const row = [...pool.knowledge.values()][0];
+    assert.equal(row.owner_id, 'owner-a');
+    assert.equal((await knowledge.relevant('owner-b', '定休日')).length, 0);
+    const id = [...pool.conversations.keys()][0];
+    assert.equal((await post(other, '/api/chat', { conversationId:id, message:'木曜日を定休日にする' })).status, 404);
+    const originalCreate = knowledge.create;
+    knowledge.create = async () => { throw new Error('postgresql://example:dummy-secret@localhost/test'); };
+    const failed = await post(owner, '/api/knowledge', { ...candidate, confirmed:true });
+    assert.equal(failed.status, 503);
+    assert.doesNotMatch(await failed.text(), /dummy-secret/);
+    assert.doesNotMatch(JSON.stringify(logs), /dummy-secret|example-only/);
+    knowledge.create = originalCreate;
+    assert.equal(pool.knowledge.size, 1);
+  });
+});

@@ -102,3 +102,47 @@ test('登録済み知識はアイコン用の固定幅列を使わず本文と�
   assert.match(css, /\.knowledge-content\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere/);
   assert.match(css, /@media\s*\(max-width:\s*640px\)\s*\{\s*\.knowledge-item\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/);
 });
+
+
+test('候補UIは確認項目をエスケープし、承認操作だけが登録APIを呼ぶ', async () => {
+  const vm = require('node:vm');
+  const fs = require('node:fs');
+  const calls = [], stored = [];
+  const context = vm.createContext({
+    module:{ exports:{} }, console, Date, JSON, structuredClone, setTimeout:() => 0,
+    localStorage:{ getItem:() => null, setItem:(_key, value) => stored.push(value) },
+    location:{ hash:'' }, document:{ querySelector:stub, createElement:stub, addEventListener(){} },
+    window:{ addEventListener(){} },
+    fetch:async (path, options) => {
+      calls.push({ path, options });
+      return { ok:true, json:async () => path === 'api/conversations' ? { conversation:{ id:'new-id' } } : { knowledge:[] } };
+    }
+  });
+  vm.runInContext(fs.readFileSync(require('node:path').join(__dirname, '../app.js'), 'utf8'), context);
+  vm.runInContext(`memoryProposals = [{ id:'1', category:'店舗', title:'<script>test</script>', body:'木曜日を定休日にする', source:'本人の決定' }];`, context);
+  assert.doesNotMatch(vm.runInContext('chatView()', context), /data-memory-accept/); // public demo
+  vm.runInContext('serverConversation = true;', context);
+  const html = vm.runInContext('chatView()', context);
+  assert.match(html, /&lt;script&gt;test&lt;\/script&gt;/);
+  assert.match(html, /本人の決定/);
+  assert.match(html, /type="button"[^>]*data-memory-accept="1"/);
+  assert.match(html, /今回は登録しない/);
+  assert.equal(calls.length, 0);
+  await vm.runInContext(`decideMemoryCandidate('1', false)`, context);
+  assert.equal(calls.length, 0);
+  assert.equal(vm.runInContext('memoryProposals.length', context), 0);
+  vm.runInContext(`memoryProposals = [{ id:'2', category:'店舗', title:'定休日', body:'木曜日を定休日にする', source:'本人の決定' }]; saveState();`, context);
+  assert.ok(stored.every(value => !value.includes('木曜日')));
+  const first = vm.runInContext(`decideMemoryCandidate('2', true)`, context);
+  await vm.runInContext(`decideMemoryCandidate('2', true)`, context); // double click while pending
+  await first;
+  const writes = calls.filter(call => call.options?.method === 'POST');
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].path, 'api/knowledge');
+  assert.equal(JSON.parse(writes[0].options.body).confirmed, true);
+  assert.equal(vm.runInContext('memoryProposals.length', context), 0);
+  vm.runInContext(`memoryProposals = [{ id:'3' }];`, context);
+  await vm.runInContext('startNewConversation()', context);
+  assert.equal(vm.runInContext('memoryProposals.length', context), 0);
+  assert.equal(calls.filter(call => call.options?.method === 'POST').length, 2); // only new conversation creation
+});
