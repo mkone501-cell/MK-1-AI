@@ -50,6 +50,9 @@ let conversationLoading = false;
 let newConversationPending = false;
 let conversationGeneration = 0;
 let knowledgeItems = [];
+// Unapproved candidates stay in memory only; never localStorage or the knowledge DB.
+let memoryProposals = [];
+let proposalSequence = 0;
 let editingKnowledgeId = null;
 
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
@@ -99,7 +102,7 @@ function approvalMini(a) { return `<div class="approval-row"><span class="agent-
 function chart() { return `<div class="report-chart">${[38,48,42,62,58,78,88,76,96].map((h,i)=>`<div class="bar" style="height:${h}%"><span>${i+1}月</span></div>`).join('')}</div>`; }
 function empty(title,text) { return `<div class="empty">◌<b>${title}</b><span>${text}</span></div>`; }
 
-function chatView() { const waiting=conversationLoading || newConversationPending; return `<div class="chat-layout"><div class="card chat-card"><div class="chat-header"><span class="agent-icon">✦</span><div><strong>AI秘書 ミライ</strong><small style="display:block;color:var(--muted)"><span class="status-dot"></span>対応できます</small></div>${serverConversation ? `<button class="secondary" type="button" id="new-conversation" ${waiting ? 'disabled' : ''}>＋ 新しい会話</button>` : ''}</div><div class="messages" id="messages">${state.conversations.map(m=>`<div class="message ${m.role === 'user' ? 'user':''}"><div class="bubble">${safe(m.text)}</div></div>`).join('')}${serverConversation && !state.conversations.length ? '<div class="empty">新しい会話です。ミライへ質問してください。</div>' : ''}</div><form class="composer" id="chat-form"><textarea id="chat-input" placeholder="ミライに相談する…" aria-label="メッセージ" ${waiting ? 'disabled' : ''} required></textarea><button type="submit" aria-label="送信" ${waiting ? 'disabled' : ''}>➤</button></form></div>
+function chatView() { const waiting=conversationLoading || newConversationPending; return `<div class="chat-layout"><div class="card chat-card"><div class="chat-header"><span class="agent-icon">✦</span><div><strong>AI秘書 ミライ</strong><small style="display:block;color:var(--muted)"><span class="status-dot"></span>対応できます</small></div>${serverConversation ? `<button class="secondary" type="button" id="new-conversation" ${waiting ? 'disabled' : ''}>＋ 新しい会話</button>` : ''}</div><div class="messages" id="messages">${state.conversations.map(m=>`<div class="message ${m.role === 'user' ? 'user':''}"><div class="bubble">${safe(m.text)}</div></div>`).join('')}${serverConversation && !state.conversations.length ? '<div class="empty">新しい会話です。ミライへ質問してください。</div>' : ''}${serverConversation ? memoryProposals.map(memoryCandidateView).join('') : ''}</div><form class="composer" id="chat-form"><textarea id="chat-input" placeholder="ミライに相談する…" aria-label="メッセージ" ${waiting ? 'disabled' : ''} required></textarea><button type="submit" aria-label="送信" ${waiting ? 'disabled' : ''}>➤</button></form></div>
   <div class="card suggestions"><h3>相談の例</h3><p style="font-size:12px;color:var(--muted)">押すと入力できます。</p>${['今月の広告結果はどう？','新しい広告動画を3案作って','Instagram広告を考えて','今、何を承認すればいい？'].map(x=>`<button data-suggestion="${x}">${x}</button>`).join('')}<div class="notice" style="margin-top:20px">ミライは提案と下書きを作ります。広告費の使用や外部公開は、代表の承認なしに実行しません。</div></div></div>`; }
 function projectsView() { return `<div class="page-head"><div><h2>案件一覧</h2><p>クライアントごとの仕事と進み具合を確認できます。</p></div><button class="primary" id="new-project">＋ 新しい案件（準備中）</button></div><div class="card table-card"><table><thead><tr><th>クライアント / 案件</th><th>目的</th><th>進み具合</th><th>状態</th><th></th></tr></thead><tbody>${state.projects.map(p=>{const c=state.clients.find(c=>c.id===p.clientId);return `<tr><td><span class="client-badge">NS</span><strong>${safe(c.name)}</strong><br><small>${safe(p.name)}</small></td><td>${safe(p.goal)}</td><td><div class="progress" style="width:120px"><i style="width:${p.progress}%"></i></div><small>${p.progress}%</small></td><td>${statusPill(p.status)}</td><td><button class="secondary" data-project="${p.id}">詳細を見る</button></td></tr>`}).join('')}</tbody></table></div>`; }
 function projectDetail(id) { const p=state.projects.find(x=>x.id===id)||state.projects[0], c=state.clients.find(x=>x.id===p.clientId); return `<div class="page-head"><div><button class="link-button" data-route="projects">← 案件一覧</button><h2>${safe(p.name)}</h2><p>${safe(c.name)} ・ ${safe(p.goal)}</p></div>${statusPill(p.status)}</div><div class="metrics">${metricCard('進み具合',`${p.progress}%`,'計画どおり進行中','◎')}${metricCard('作業中',`${state.tasks.filter(x=>x.status==='作業中').length}件`,'AIチームが対応中','✦')}${metricCard('広告案',`${state.adPlans.length}案`,'1案が承認待ち','◇')}${metricCard('今月の売上',yen(state.salesMetrics[0].revenue),'前月比 18.4%','¥')}</div><div class="dashboard-grid"><div class="card"><div class="section-head"><h3>この案件の作業</h3></div>${state.tasks.map(taskRow).join('')}</div><div class="card"><h3>案件情報</h3><p><small>クライアント</small><br><strong>${safe(c.name)}</strong></p><p><small>開始日</small><br><strong>${p.startedAt}</strong></p><p><small>目標</small><br><strong>${safe(p.goal)}</strong></p></div></div>`; }
@@ -108,6 +111,28 @@ function approvalsView() { const pending=state.approvals.filter(x=>x.status==='�
 function approvalDetail(a) { return `<div class="approval-detail"><span class="agent-icon">${a.category==='広告費'?'¥':'↗'}</span><div class="row-main"><div>${statusPill(a.status)} <small>${safe(a.category)}</small></div><h3>${safe(a.title)}</h3><p style="color:var(--muted);font-size:13px;line-height:1.7">${safe(a.description)}</p><small>提案：${safe(a.requestedBy)} ・ ${new Date(a.requestedAt).toLocaleString('ja-JP')}${a.amount?` ・ 上限 ${yen(a.amount)}`:''}</small></div>${a.status==='承認待ち'?`<div class="button-row"><button class="primary" data-approval="${a.id}" data-decision="承認済み">承認する</button><button class="danger-button" data-approval="${a.id}" data-decision="却下">却下する</button></div>`:''}</div>`; }
 function adsView() { return `<div class="page-head"><div><h2>広告案</h2><p>制作AIが作った案です。外部にはまだ公開されていません。</p></div><button class="primary" data-route="chat">＋ AI秘書に新しい案を依頼</button></div><div class="ads-grid">${state.adPlans.map((a,i)=>`<div class="card"><div class="ad-preview"><div><small>NORTH STAR BEANS</small><br><b>${safe(a.title)}</b></div></div>${statusPill(a.status)} <small>${safe(a.type)}</small><h3>${safe(a.title)}</h3><p style="color:var(--muted);font-size:13px;line-height:1.7">${safe(a.description)}</p><button class="secondary" data-ad="${a.id}">内容を見る</button></div>`).join('')}</div>`; }
 function reportsView() { const m=state.adMetrics[0], s=state.salesMetrics[0]; return `<div class="page-head"><div><h2>9月の分析レポート</h2><p>NORTH STAR BEANS ・ 2026年9月1日〜15日</p></div><button class="secondary" id="download-report">レポートを保存</button></div><div class="metrics">${metricCard('売上',yen(s.revenue),'↗ 前月比 18.4%','¥')}${metricCard('広告費',yen(m.spend),'予算内で進行中','◎')}${metricCard('購入数',`${m.conversions}件`,'↗ 前月比 12.7%','▣')}${metricCard('広告の効果',`${m.roas.toFixed(2)}倍`,'目標 3.0倍を達成','↗')}</div><div class="dashboard-grid"><div class="card"><div class="section-head"><h3>EC売上の推移</h3></div>${chart()}</div><div class="card"><h3>AIからの分かりやすいまとめ</h3><p style="line-height:1.8;color:var(--muted)">広告費1円あたり、約3.42円の売上につながっています。特に、一度商品を見たお客様への広告が好調です。</p><div class="notice"><strong>次の提案</strong><br>好調な広告を続けながら、新しい動画3案を少額で比較することをおすすめします。費用を使う前に承認をお願いします。</div></div></div>`; }
+function memoryCandidateView(item) {
+  return `<section class="memory-candidate notice" aria-label="長期記憶への登録候補"><strong>長期記憶への登録候補があります</strong><p>まだ登録していません。対象の店舗・事業と内容を確認してください。外部操作の承認ではありません。</p><small>${safe(item.category)}</small><h3>${safe(item.title)}</h3><p>${safe(item.body)}</p><p>登録理由：${safe(item.source)}</p><div class="knowledge-actions"><button type="button" class="primary" data-memory-accept="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>登録する</button><button type="button" class="secondary" data-memory-dismiss="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>今回は登録しない</button></div></section>`;
+}
+
+async function decideMemoryCandidate(id, accept) {
+  const item = memoryProposals.find(item => item.id === id);
+  if (!serverConversation || !item || item.pending) return;
+  if (!accept) { memoryProposals = memoryProposals.filter(value => value !== item); render(); return; }
+  item.pending = true;
+  render();
+  try {
+    const { category, title, body, source } = item;
+    const response = await fetch('api/knowledge', { method:'POST', headers:{ 'Content-Type':'application/json' },
+      body:JSON.stringify({ category, title, body, source, confirmed:true }) });
+    if (!response.ok) throw new Error('registration failed');
+    memoryProposals = memoryProposals.filter(value => value !== item);
+    showToast('確認した内容を長期記憶に登録しました。');
+    await loadKnowledge();
+  } catch { showToast('登録を確認できませんでした。設定の登録済み知識を確認してから再度お試しください。'); }
+  finally { item.pending = false; render(); }
+}
+
 function knowledgeItemView(item) {
   return `<article class="knowledge-item"><div class="knowledge-content"><small>${safe(item.category)} ・ ${item.active ? '有効' : '無効'}</small><h3>${safe(item.title)}</h3><p class="knowledge-body">${safe(item.body)}</p><small class="knowledge-source">情報源：${safe(item.source)}</small></div>${item.active ? `<div class="knowledge-actions"><button class="secondary" type="button" data-knowledge-edit="${safe(item.id)}">編集</button><button class="danger-button" type="button" data-knowledge-disable="${safe(item.id)}">無効化</button></div>` : ''}</article>`;
 }
@@ -171,7 +196,11 @@ async function handleChat(text) {
     else result = { answer:'会話を保存できませんでした。時間をおいてもう一度お試しください。' };
   }
   if (generation !== conversationGeneration) return;
-  if (serverConversation && result.conversationId) activeConversationId = result.conversationId;
+  if (serverConversation && result.conversationId) {
+    activeConversationId = result.conversationId;
+    // Replace the preceding turn's unapproved candidates; bound transient UI memory.
+    memoryProposals = (result.memoryCandidates || []).slice(0, 1).map(item => ({ ...item, id:String(++proposalSequence) }));
+  }
   if (result.mode === 'demo' && !result.task) result.task = demoChatResult(msg).task;
   if (result.task) state.tasks.unshift(result.task);
   state.conversations.push({ id:`msg-${Date.now()+1}`, role:'assistant', text:result.answer, createdAt:new Date().toISOString() });
@@ -190,6 +219,7 @@ async function startNewConversation() {
     conversationGeneration++;
     activeConversationId = result.conversation.id;
     state.conversations = [];
+    memoryProposals = [];
     saveState();
     showToast('新しい会話を開始しました。過去の会話は保存されています。');
   } catch { showToast('新しい会話を作成できませんでした。'); }
@@ -202,6 +232,7 @@ window.addEventListener('mk1:authenticated', async () => {
   conversationGeneration++;
   loadKnowledge();
   state.conversations = [];
+  memoryProposals = [];
   activeConversationId = null;
   saveState();
   render();
@@ -259,6 +290,10 @@ async function previewKnowledge(question) {
 function decideApproval(id, decision) { const a=state.approvals.find(x=>x.id===id); if(!a)return; a.status=decision; a.decidedAt=new Date().toISOString(); state.auditLog.unshift({ id:`log-${Date.now()}`, actor:state.settings.ownerName, action:decision, target:a.title, createdAt:a.decidedAt }); saveState(); showToast(`${a.title}を「${decision}」として記録しました。`); render(); }
 
 document.addEventListener('click', e => {
+  const acceptMemory = e.target.closest('[data-memory-accept]');
+  if (acceptMemory) decideMemoryCandidate(acceptMemory.dataset.memoryAccept, true);
+  const dismissMemory = e.target.closest('[data-memory-dismiss]');
+  if (dismissMemory) decideMemoryCandidate(dismissMemory.dataset.memoryDismiss, false);
   if(e.target.closest('#new-conversation')) startNewConversation();
   if(e.target.closest('#knowledge-preview-button')) previewKnowledge(document.querySelector('#knowledge-preview-question').value).catch(error=>showToast(error.message));
   const route=e.target.closest('[data-route]')?.dataset.route; if(route) routeTo(route);
@@ -288,4 +323,4 @@ window.addEventListener('hashchange',()=>{ currentRoute=location.hash.replace('#
 render();
 
 // Browser-free tests can import the initial data and safety helpers.
-if (typeof module !== 'undefined') module.exports = { initialState, clone, safe, demoChatResult, knowledgeView, knowledgeItemView, APP_VERSION, STORAGE_KEY };
+if (typeof module !== 'undefined') module.exports = { initialState, clone, safe, demoChatResult, knowledgeView, knowledgeItemView, memoryCandidateView, APP_VERSION, STORAGE_KEY };

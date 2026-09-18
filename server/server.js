@@ -17,6 +17,7 @@ const { PostgresKnowledgeRepository } = require('./knowledge/postgres-knowledge-
 const { migrateKnowledge } = require('./knowledge/migrate-knowledge');
 const { validateKnowledge } = require('./knowledge/validation');
 const { knowledgeContext } = require('./knowledge/context');
+const { memoryCandidates } = require('./knowledge/candidates');
 
 const ROOT = path.resolve(__dirname, '..');
 const MAX_BODY_BYTES = 32 * 1024;
@@ -292,7 +293,8 @@ function createApplication(options = {}) {
           }
           try {
             const conversationId = await conversations.appendExchange({ ownerId:session.user.id, conversationId:id, message, answer:result.answer });
-            return respondJson(req, res, 200, { ...result, conversationId });
+            return respondJson(req, res, 200, { ...result, conversationId,
+              memoryCandidates:knowledge ? memoryCandidates(message, config, req) : [] });
           } catch {
             logger.error('conversation.save_failed');
             return respondJson(req, res, 503, { error:'会話を保存できませんでした。時間をおいてお試しください。' });
