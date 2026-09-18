@@ -1,7 +1,7 @@
 'use strict';
 
 const { randomUUID } = require('node:crypto');
-const { searchPatterns } = require('./validation');
+const { searchPatterns, rankKnowledge, MAX_CANDIDATES } = require('./retrieval');
 
 const fields = 'id, category, title, body, source, active, created_at, updated_at';
 function item(row) {
@@ -60,10 +60,11 @@ class PostgresKnowledgeRepository {
       `SELECT ${fields} FROM management_knowledge
        WHERE owner_id = $1 AND active = TRUE
        AND (title ILIKE ANY($2::text[]) OR category ILIKE ANY($2::text[]) OR body ILIKE ANY($2::text[]))
-       ORDER BY updated_at DESC, id DESC LIMIT $3`,
-      [ownerId, patterns, 4]
+       ORDER BY CASE WHEN title ILIKE ANY($2::text[]) THEN 0 ELSE 1 END,
+         updated_at DESC, id DESC LIMIT $3`,
+      [ownerId, patterns, MAX_CANDIDATES]
     );
-    return result.rows.map(item);
+    return rankKnowledge(result.rows.map(item), question);
   }
 }
 
