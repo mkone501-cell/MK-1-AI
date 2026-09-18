@@ -82,6 +82,34 @@ test('SQLインジェクション文字列はSQL本文に展開されず検索�
   assert.ok(searchPatterns('北品川の家賃').length <= 20);
 });
 
+test('複数の店舗・不動産・会社知識から質問に関係するものを選び所有者と件数を守る', async () => {
+  const pool = fakePool(), repo = new PostgresKnowledgeRepository(pool);
+  const property = await repo.create('owner-a', { ...sample, title:'北品川ビルの家賃' });
+  const store = await repo.create('owner-a', { category:'店舗', title:'カフェ青山の営業時間', body:'平日は午前9時から営業', source:'本人確認' });
+  await repo.create('owner-a', { category:'経営方針', title:'広告の方針', body:'広告は承認後に公開する', source:'本人確認' });
+  for (let i = 0; i < 16; i++) await repo.create('owner-a', { category:'不動産', title:`関係ない物件${i}`, body:'別の地域の用途について', source:'本人確認' });
+  await repo.create('owner-b', { ...sample, title:'北品川ビルの家賃', body:'他ユーザーの秘密' });
+  const matches = await repo.relevant('owner-a', '北品川ビルの家賃とカフェ青山の営業時間を教えて');
+  assert.ok(matches.some(row => row.id === property.id));
+  assert.ok(matches.some(row => row.id === store.id));
+  assert.ok(matches.length <= 4);
+  assert.ok(matches.every(row => row.body !== '他ユーザーの秘密'));
+  const call = pool.calls.at(-1);
+  assert.equal(call.args[0], 'owner-a');
+  assert.equal(call.args[2], 80);
+  assert.match(call.sql, /owner_id = \$1 AND active = TRUE/);
+  assert.ok(knowledgeContext(matches).length <= 4);
+});
+
+test('言い換えた質問でも店舗情報を探し、無関係の知識は追加しない', async () => {
+  const pool = fakePool(), repo = new PostgresKnowledgeRepository(pool);
+  const store = await repo.create('owner-a', { category:'店舗', title:'営業時間', body:'火曜は定休日', source:'本人確認' });
+  await repo.create('owner-a', { category:'財務', title:'融資', body:'資金調達の条件', source:'本人確認' });
+  const matches = await repo.relevant('owner-a', 'お店の営業について教えて');
+  assert.deepEqual(matches.map(item => item.id), [store.id]);
+  assert.deepEqual(await repo.relevant('owner-b', 'お店の営業について教えて'), []);
+});
+
 test('秘密情報・確認なしの登録を拒否しAIへの知識サイズを制限する', () => {
   const config = loadConfig({ NODE_ENV:'test', OPENAI_API_KEY:'sk-dummy-very-long-private-key', DATABASE_URL:'postgresql://user:hidden@postgres.railway.internal/db' });
   const valid = { ...sample, confirmed:true };
