@@ -110,6 +110,38 @@ test('言い換えた質問でも店舗情報を探し、無関係の知識は�
   assert.deepEqual(await repo.relevant('owner-b', 'お店の営業について教えて'), []);
 });
 
+test('コーヒー店などの表現から店舗・会社・事業の知識を探し、他分野の知識を送らない', async () => {
+  const pool = fakePool(), repo = new PostgresKnowledgeRepository(pool);
+  const store = await repo.create('owner-a', { category:'店舗', title:'NORTH STAR BEANS', body:'北品川で営業する専門店', source:'本人確認' });
+  const business = await repo.create('owner-a', { category:'事業', title:'コーヒー事業の概要', body:'豆を焙煎し販売する', source:'本人確認' });
+  const company = await repo.create('owner-a', { category:'会社基本情報', title:'会社と店舗の関係', body:'法人で店舗を経営する', source:'本人確認' });
+  for (let i = 0; i < 25; i++) await repo.create('owner-a', { category:'不動産', title:`物件${i}`, body:'賃貸借の管理情報', source:'本人確認' });
+  await repo.create('owner-b', { category:'店舗', title:'他社の店舗', body:'他人の情報', source:'本人確認' });
+  for (const question of [
+    '私が経営しているコーヒー店について教えてください。',
+    '私のお店について教えて', 'カフェについて教えて', '店舗について教えて',
+    '珈琲店について教えて', 'コーヒーショップについて教えて'
+  ]) {
+    const matches = await repo.relevant('owner-a', question);
+    assert.ok(matches.some(item => item.id === store.id), question);
+    assert.ok(matches.some(item => item.id === business.id), question);
+    assert.ok(matches.some(item => item.id === company.id), question);
+    assert.ok(matches.length <= 4);
+    assert.ok(matches.every(item => item.category !== '不動産' && item.body !== '他人の情報'), question);
+    assert.ok(knowledgeContext(matches).length <= 4);
+  }
+  assert.deepEqual((await repo.relevant('owner-b', '私のコーヒー店について')).map(item => item.body), ['他人の情報']);
+});
+
+test('店舗以外の話題にも同じカテゴリ検索を適用する', async () => {
+  const pool = fakePool(), repo = new PostgresKnowledgeRepository(pool);
+  const property = await repo.create('owner-a', { category:'不動産', title:'北品川の土地', body:'所有する土地の情報', source:'本人確認' });
+  const commerce = await repo.create('owner-a', { category:'EC', title:'通販の運営', body:'商品の販売状況', source:'本人確認' });
+  await repo.create('owner-a', { category:'広告', title:'広告施策', body:'掲載前に承認する', source:'本人確認' });
+  assert.ok((await repo.relevant('owner-a', '物件について教えて')).some(item => item.id === property.id));
+  assert.ok((await repo.relevant('owner-a', 'ネットショップについて教えて')).some(item => item.id === commerce.id));
+});
+
 test('秘密情報・確認なしの登録を拒否しAIへの知識サイズを制限する', () => {
   const config = loadConfig({ NODE_ENV:'test', OPENAI_API_KEY:'sk-dummy-very-long-private-key', DATABASE_URL:'postgresql://user:hidden@postgres.railway.internal/db' });
   const valid = { ...sample, confirmed:true };

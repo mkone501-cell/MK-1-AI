@@ -104,6 +104,37 @@ test('新しい会話は空の別IDで永続化し、旧履歴を送らず長期
   assert.equal((await new PostgresKnowledgeRepository(pool).relevant('owner-a', '私の好きな数字は何ですか？')).length, 1);
 });
 
+test('新しい会話のコーヒー店相談は店舗知識だけを参照し旧会話を送らない', async () => {
+  const pool = poolFixture(), conversations = new PostgresConversationRepository(pool), knowledge = new PostgresKnowledgeRepository(pool);
+  const sessions = new SessionStore({ secure:false });
+  const owner = await sessions.create({ id:'owner-a', role:'owner' });
+  const oldId = await conversations.appendExchange({ ownerId:'owner-a', message:'前の会話だけの青い傘', answer:'青い傘ですね' });
+  await knowledge.create('owner-a', { category:'店舗', title:'NORTH STAR BEANS', body:'北品川で豆を焙煎するコーヒー店', source:'本人確認' });
+  for (let i = 0; i < 24; i++) await knowledge.create('owner-a', { category:'不動産', title:`賃貸物件${i}`, body:'別の建物の管理情報', source:'本人確認' });
+  await knowledge.create('owner-b', { category:'店舗', title:'他人の店', body:'他人の非公開店舗データ', source:'本人確認' });
+  const providerInputs = [];
+  const mirai = new MiraiService({ apiKey:'test-placeholder', model:'unchanged-model', fetchImpl:async (_url, options) => {
+    const request = JSON.parse(options.body);
+    providerInputs.push(request);
+    return { ok:true, json:async () => ({ output_text:'NORTH STAR BEANSについてお答えします。' }) };
+  } });
+  await withServer({ config:loadConfig({ NODE_ENV:'test' }), sessions, conversations, knowledge, mirai, auth:{ configured:true, incomplete:false } }, async base => {
+    const post = (path, body) => fetch(base + path, { method:'POST', headers:{ Cookie:`mk1_owner_session=${owner.token}`, 'X-CSRF-Token':owner.session.csrfToken, 'Content-Type':'application/json' }, body:JSON.stringify(body) });
+    const created = await post('/api/conversations', {});
+    assert.equal(created.status, 201);
+    const newId = (await created.json()).conversation.id;
+    assert.notEqual(newId, oldId);
+    const response = await post('/api/chat', { conversationId:newId, message:'私が経営しているコーヒー店について教えてください。' });
+    assert.equal(response.status, 200);
+    const input = JSON.stringify(providerInputs[0].input);
+    assert.match(input, /NORTH STAR BEANS/);
+    assert.doesNotMatch(input, /青い傘|賃貸物件|他人の非公開店舗データ/);
+    assert.ok(input.length < 4500);
+    assert.equal((await conversations.messages('owner-a', oldId)).length, 2);
+    assert.equal(pool.knowledge.size, 26);
+  });
+});
+
 test('新しい会話のDB障害は秘密を返さず、既存データを削除しない', async () => {
   const pool = poolFixture(), conversations = new PostgresConversationRepository(pool);
   const oldId = (await conversations.create('owner-a')).id;
