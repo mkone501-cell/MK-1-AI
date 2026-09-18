@@ -6,7 +6,8 @@ const MAX_RESULTS = 4;
 // 質問の言い換えと登録カテゴリを同じ話題として扱う。分野を増やす場合はここに追加する。
 // 関連カテゴリは弱く扱い、店舗の相談で会社・事業の概要も候補にできるようにする。
 const topics = [
-  { name:'store', words:['店舗', 'お店', 'カフェ', 'コーヒー店', '珈琲店', 'コーヒーショップ', '喫茶店'], categories:['店舗'], related:['事業', '会社基本情報'] },
+  { name:'store', words:['店舗', 'お店', 'カフェ', 'コーヒー店', '珈琲店', 'コーヒーショップ', '喫茶店'],
+    contentWords:['コーヒー', '珈琲', '焙煎', 'coffee', '店舗'], categories:['店舗'], related:['事業', '会社基本情報'] },
   { name:'company', words:['会社', '法人', '自社', '当社'], categories:['会社基本情報'], related:['事業'] },
   { name:'business', words:['事業', 'ビジネス'], categories:['事業'], related:['会社基本情報'] },
   { name:'property', words:['不動産', '物件', 'ビル', '賃貸'], categories:['不動産'], related:[] },
@@ -24,7 +25,8 @@ const aliases = new Map([
 
 function queryTerms(question) {
   const normalizedQuestion = String(question).normalize('NFKC').toLowerCase();
-  const parts = normalizedQuestion.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}A-Za-z0-9]+/gu) || [];
+  // 英語の固有名詞の直後に日本語が続いても、両方の語を残す。
+  const parts = normalizedQuestion.match(/[a-z0-9]+|[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\u30FC]+/gu) || [];
   const terms = [];
   for (const part of parts) {
     if (/^[a-z0-9]+$/i.test(part)) {
@@ -48,9 +50,12 @@ function queryTerms(question) {
   for (const [trigger, values] of aliases) {
     if (normalizedQuestion.includes(trigger.toLowerCase())) values.forEach(value => expanded.add(value));
   }
-  const matchedTopics = topics.filter(topic => topic.words.some(word => normalizedQuestion.includes(word.toLowerCase())));
+  const matchedTopics = topics.filter(topic => topic.words.some(word =>
+    word === 'EC' ? /(?:^|[^a-z0-9])ec(?=$|[^a-z0-9])/.test(normalizedQuestion) : normalizedQuestion.includes(word.toLowerCase())) ||
+    (topic.name === 'store' && /(?:私の|うちの|自分の|経営している|経営する)店(?!長)/u.test(normalizedQuestion)));
   for (const topic of matchedTopics) {
     topic.words.forEach(word => expanded.add(word));
+    (topic.contentWords || []).forEach(word => expanded.add(word));
     topic.categories.concat(topic.related).forEach(category => expanded.add(category));
   }
   return { direct, expanded:[...expanded].filter(value => !direct.includes(value)).slice(0, 32), topics:matchedTopics };
@@ -59,6 +64,14 @@ function queryTerms(question) {
 function searchPatterns(question) {
   const { direct, expanded } = queryTerms(question);
   return [...direct, ...expanded].map(term => `%${term.replace(/[\\%_]/g, '\\$&')}%`);
+}
+
+function categoryPatterns(question) {
+  const { topics:matchedTopics } = queryTerms(question);
+  const primary = new Set(matchedTopics.flatMap(topic => topic.categories));
+  const related = new Set(matchedTopics.flatMap(topic => topic.related).filter(value => !primary.has(value)));
+  const pattern = term => `%${term.replace(/[\\%_]/g, '\\$&')}%`;
+  return { primary:[...primary].map(pattern), related:[...related].map(pattern) };
 }
 
 function rankKnowledge(rows, question) {
@@ -103,4 +116,4 @@ function rankKnowledge(rows, question) {
   return selected;
 }
 
-module.exports = { queryTerms, searchPatterns, rankKnowledge, MAX_CANDIDATES };
+module.exports = { queryTerms, searchPatterns, categoryPatterns, rankKnowledge, MAX_CANDIDATES };

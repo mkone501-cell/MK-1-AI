@@ -113,6 +113,7 @@ function knowledgeView() {
   const editing = knowledgeItems.find(item => item.id === editingKnowledgeId && item.active);
   return `<div class="card" style="margin-top:20px"><div class="section-head"><h3>経営知識（長期記憶）</h3></div><p>登録を確認した情報だけを保存します。会話から自動登録しません。パスワード・APIキー・秘密情報は入力しないでください。</p>
     <form id="knowledge-form"><div class="form-grid"><div class="field"><label>カテゴリ</label><input name="category" list="knowledge-categories" maxlength="40" value="${safe(editing?.category || '')}" required><datalist id="knowledge-categories">${['会社基本情報','事業','店舗','商品','顧客','スタッフ','経営方針','承認ルール','不動産','財務','EC','広告','その他'].map(value=>`<option value="${value}">`).join('')}</datalist></div><div class="field"><label>タイトル</label><input name="title" maxlength="120" value="${safe(editing?.title || '')}" required></div></div><div class="field"><label>本文</label><textarea name="body" maxlength="3000" required>${safe(editing?.body || '')}</textarea></div><div class="field"><label>情報源・登録理由</label><input name="source" maxlength="500" value="${safe(editing?.source || '')}" required></div><div class="field"><label><input type="checkbox" name="confirmed" required> 内容を確認し、長期知識として${editing ? '更新' : '登録'}します</label></div><button class="primary" type="submit">${editing ? '知識を更新' : '知識を登録'}</button> ${editing ? '<button class="secondary" type="button" id="cancel-knowledge-edit">編集をやめる</button>' : ''}</form>
+    <div style="margin-top:20px"><h3>質問で参照される知識を確認</h3><p>AIへ送信せずに、現在の質問で選ばれる知識のタイトルだけを確認します。</p><form id="knowledge-preview-form"><div class="field"><label>質問</label><input name="question" maxlength="8000" required placeholder="私が経営しているコーヒー店について教えてください"></div><button class="secondary" type="submit">参照する知識を確認</button></form><div id="knowledge-preview-result" aria-live="polite"></div></div>
     <div style="margin-top:20px"><h3>登録済みの知識</h3>${knowledgeItems.length ? knowledgeItems.map(item=>`<div class="approval-detail"><div class="row-main"><small>${safe(item.category)} ・ ${item.active ? '有効' : '無効'}</small><h3>${safe(item.title)}</h3><p>${safe(item.body)}</p><small>情報源：${safe(item.source)}</small></div>${item.active ? `<div class="button-row"><button class="secondary" data-knowledge-edit="${safe(item.id)}">編集</button><button class="danger-button" data-knowledge-disable="${safe(item.id)}">無効化</button></div>` : ''}</div>`).join('') : '<p>登録された経営知識はまだありません。</p>'}</div></div>`;
 }
 function settingsView() { const s=state.settings; return `<div class="page-head"><div><h2>設定</h2><p>会社情報と安全ルールを確認できます。</p></div></div><form class="card" id="settings-form"><div class="form-grid"><div class="field"><label>会社名</label><input name="companyName" value="${safe(s.companyName)}"></div><div class="field"><label>代表者名</label><input name="ownerName" value="${safe(s.ownerName)}"></div><div class="field"><label>表示言語</label><select><option>日本語</option></select></div><div class="field"><label>バージョン</label><input value="Ver.${APP_VERSION}" disabled></div></div><div class="notice" style="margin:20px 0"><strong>重要操作の承認：有効</strong><br>広告費、価格変更、重要メッセージ、契約、データ削除、外部公開は必ず承認待ちになります。この設定はVer.0.1では無効にできません。</div><button class="primary" type="submit">設定を保存</button> <button class="danger-button" type="button" id="reset-data">お試しデータに戻す</button></form>${knowledgeView()}`; }
@@ -235,6 +236,21 @@ async function saveKnowledge(form) {
   await loadKnowledge();
   showToast('経営知識を保存しました。');
 }
+async function previewKnowledge(form) {
+  const response = await fetch('api/knowledge/preview', { method:'POST', headers:{ 'Content-Type':'application/json' },
+    body:JSON.stringify({ question:new FormData(form).get('question') }) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || '検索できませんでした。');
+  const target = document.querySelector('#knowledge-preview-result');
+  if (!target) return;
+  target.replaceChildren();
+  if (!data.knowledge.length) { target.textContent = '参照する知識は見つかりませんでした。登録済みのカテゴリ・タイトル・本文を確認してください。'; return; }
+  for (const item of data.knowledge) {
+    const line = document.createElement('p');
+    line.textContent = `${item.category}：${item.title}`;
+    target.append(line);
+  }
+}
 function decideApproval(id, decision) { const a=state.approvals.find(x=>x.id===id); if(!a)return; a.status=decision; a.decidedAt=new Date().toISOString(); state.auditLog.unshift({ id:`log-${Date.now()}`, actor:state.settings.ownerName, action:decision, target:a.title, createdAt:a.decidedAt }); saveState(); showToast(`${a.title}を「${decision}」として記録しました。`); render(); }
 
 document.addEventListener('click', e => {
@@ -261,6 +277,7 @@ document.addEventListener('submit', e => {
   if(e.target.id==='chat-form') { e.preventDefault(); handleChat(document.querySelector('#chat-input').value); }
   if(e.target.id==='settings-form') { e.preventDefault(); const data=new FormData(e.target); state.settings.companyName=data.get('companyName'); state.settings.ownerName=data.get('ownerName'); saveState(); showToast('設定を保存しました。'); }
   if(e.target.id==='knowledge-form') { e.preventDefault(); saveKnowledge(e.target).catch(error=>showToast(error.message)); }
+  if(e.target.id==='knowledge-preview-form') { e.preventDefault(); previewKnowledge(e.target).catch(error=>showToast(error.message)); }
 });
 window.addEventListener('hashchange',()=>{ currentRoute=location.hash.replace('#/','')||'home'; render(); });
 render();

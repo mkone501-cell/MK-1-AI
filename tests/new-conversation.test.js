@@ -39,7 +39,7 @@ function poolFixture() {
       return { rows:[{ ...row }] };
     }
     if (sql.includes('FROM management_knowledge') && sql.includes('ILIKE ANY')) {
-      return { rows:[...knowledge.values()].filter(row => row.owner_id === args[0] && row.active && args[1].some(pattern => [row.title,row.body,row.category].some(value => value.includes(pattern.slice(1,-1))))).slice(0,args[2]) };
+      return { rows:[...knowledge.values()].filter(row => row.owner_id === args[0] && row.active && args[1].some(pattern => [row.title,row.body,row.category].some(value => value.toLowerCase().includes(pattern.slice(1,-1).toLowerCase())))).slice(0,args.at(-1)) };
     }
     return { rows:[] };
   };
@@ -120,16 +120,19 @@ test('新しい会話のコーヒー店相談は店舗知識だけを参照し�
   } });
   await withServer({ config:loadConfig({ NODE_ENV:'test' }), sessions, conversations, knowledge, mirai, auth:{ configured:true, incomplete:false } }, async base => {
     const post = (path, body) => fetch(base + path, { method:'POST', headers:{ Cookie:`mk1_owner_session=${owner.token}`, 'X-CSRF-Token':owner.session.csrfToken, 'Content-Type':'application/json' }, body:JSON.stringify(body) });
-    const created = await post('/api/conversations', {});
-    assert.equal(created.status, 201);
-    const newId = (await created.json()).conversation.id;
-    assert.notEqual(newId, oldId);
-    const response = await post('/api/chat', { conversationId:newId, message:'私が経営しているコーヒー店について教えてください。' });
-    assert.equal(response.status, 200);
-    const input = JSON.stringify(providerInputs[0].input);
-    assert.match(input, /NORTH STAR BEANS/);
-    assert.doesNotMatch(input, /青い傘|賃貸物件|他人の非公開店舗データ/);
-    assert.ok(input.length < 4500);
+    for (const question of ['私が経営しているコーヒー店について教えてください。',
+      '私の店について教えて', 'うちのカフェについて教えて', 'NORTH STAR BEANSについて教えて']) {
+      const created = await post('/api/conversations', {});
+      assert.equal(created.status, 201);
+      const newId = (await created.json()).conversation.id;
+      assert.notEqual(newId, oldId);
+      const response = await post('/api/chat', { conversationId:newId, message:question });
+      assert.equal(response.status, 200);
+      const input = JSON.stringify(providerInputs.at(-1).input);
+      assert.match(input, /NORTH STAR BEANS/, question);
+      assert.doesNotMatch(input, /青い傘|賃貸物件|他人の非公開店舗データ/, question);
+      assert.ok(input.length < 4500, question);
+    }
     assert.equal((await conversations.messages('owner-a', oldId)).length, 2);
     assert.equal(pool.knowledge.size, 26);
   });
