@@ -119,7 +119,7 @@ test('候補UIは確認項目をエスケープし、承認操作だけが登録
     }
   });
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname, '../app.js'), 'utf8'), context);
-  vm.runInContext(`memoryProposals = [{ id:'1', category:'店舗', title:'<script>test</script>', body:'木曜日を定休日にする', source:'本人の決定' }];`, context);
+  vm.runInContext(`memoryProposals = [{ id:'1', kind:'create', category:'店舗', title:'<script>test</script>', body:'木曜日を定休日にする', source:'本人の決定' }];`, context);
   assert.doesNotMatch(vm.runInContext('chatView()', context), /data-memory-accept/); // public demo
   vm.runInContext('serverConversation = true;', context);
   const html = vm.runInContext('chatView()', context);
@@ -131,7 +131,7 @@ test('候補UIは確認項目をエスケープし、承認操作だけが登録
   await vm.runInContext(`decideMemoryCandidate('1', false)`, context);
   assert.equal(calls.length, 0);
   assert.equal(vm.runInContext('memoryProposals.length', context), 0);
-  vm.runInContext(`memoryProposals = [{ id:'2', category:'店舗', title:'定休日', body:'木曜日を定休日にする', source:'本人の決定' }]; saveState();`, context);
+  vm.runInContext(`memoryProposals = [{ id:'2', kind:'create', category:'店舗', title:'定休日', body:'木曜日を定休日にする', source:'本人の決定' }]; saveState();`, context);
   assert.ok(stored.every(value => !value.includes('木曜日')));
   const first = vm.runInContext(`decideMemoryCandidate('2', true)`, context);
   await vm.runInContext(`decideMemoryCandidate('2', true)`, context); // double click while pending
@@ -154,6 +154,24 @@ test('候補UIは確認項目をエスケープし、承認操作だけが登録
   await vm.runInContext('startNewConversation()', context);
   assert.equal(vm.runInContext('memoryProposals.length', context), 0);
   assert.equal(calls.filter(call => call.options?.method === 'POST').length, 3); // registration, update approval, new conversation creation
+  const existing = [{ title:'営業時間の決定', category:'店舗', body:'平日9:00〜15:00、土日祝8:00〜17:00' },
+    { title:'営業時間の決定', category:'店舗', body:'平日9:00〜16:00、土日祝8:00〜17:00' }];
+  const review = { kind:'review', category:'店舗', title:'営業時間の決定', body:'変更文', reason:'複数の有効な既存知識が該当します。設定画面で整理してください。', existing, existingCount:2 };
+  context.fetch = async () => ({ ok:false, status:409, json:async()=>({ code:'KNOWLEDGE_REVIEW_REQUIRED', memoryCandidates:[review], error:'表示してはいけない生の詳細' }) });
+  vm.runInContext(`memoryProposals = [{ id:'stale', kind:'create', category:'店舗', title:'営業時間の決定', body:'変更文', source:'本人確認' }];`,context);
+  await vm.runInContext(`decideMemoryCandidate('stale',true)`,context);
+  const blocked = vm.runInContext('chatView()',context);
+  assert.match(blocked,/確認が必要/);
+  assert.match(blocked,/設定画面で整理してください/);
+  for (const item of existing) assert.ok(blocked.includes(item.body));
+  assert.doesNotMatch(blocked,/data-memory-accept|表示してはいけない生の詳細/);
+  context.fetch = async () => { throw new Error('review must not submit'); };
+  await vm.runInContext(`decideMemoryCandidate('stale',true)`,context);
+  // Old/malformed responses lacking a decision must also fail closed.
+  vm.runInContext(`memoryProposals = [{ id:'unknown', body:'変更文' }];`,context);
+  assert.doesNotMatch(vm.runInContext('chatView()',context),/data-memory-accept/);
+  await vm.runInContext(`decideMemoryCandidate('unknown',true)`,context);
+
 });
 
 
@@ -166,4 +184,23 @@ test('更新候補は新旧を比較表示し、不確かな候補には登録�
   assert.doesNotMatch(html, />登録する</);
   assert.match(memoryCandidateView({ ...item, previousBody:'<script>旧</script>' }), /&lt;script&gt;/);
   for (const kind of ['review','duplicate']) assert.doesNotMatch(memoryCandidateView({ ...item, kind }), /data-memory-accept/);
+});
+
+
+test('サーバーの複数候補判定をUIへそのまま渡すと比較表示だけになり保存ボタンはない', async () => {
+  const { proposeMemory } = require('../server/knowledge/update-candidates');
+  const { loadConfig } = require('../server/config');
+  const { memoryCandidateView } = require('../app.js');
+  const rows = [15,16].map(hour => ({ id:String(hour), category:'店舗', title:'営業時間の決定',
+    body:`NORTH STAR BEANSの営業時間を平日9:00〜${hour}:00、土日祝8:00〜17:00に変更する`, source:'本人確認', active:true }));
+  const [candidate] = await proposeMemory('NORTH STAR BEANSの平日の営業時間を9:00〜14:00に変更します。', { candidateRecords:async()=>rows }, 'a', loadConfig({NODE_ENV:'test'}));
+  const html = memoryCandidateView(candidate);
+  assert.match(html,/確認が必要/);
+  for (const row of rows) assert.ok(html.includes(row.body));
+  assert.doesNotMatch(html,/data-memory-accept|>登録する<|>更新する</);
+  const [update] = await proposeMemory('NORTH STAR BEANSの平日の営業時間を9:00〜14:00に変更します。', { candidateRecords:async()=>[rows[0]] }, 'a', loadConfig({NODE_ENV:'test'}));
+  const updateHtml = memoryCandidateView(update);
+  for (const label of ['現在登録されている内容','新しい内容','更新理由','更新する','今回は更新しない']) assert.ok(updateHtml.includes(label));
+  const escaped = memoryCandidateView({ ...candidate, existing:[{ title:'<script>x</script>', body:'<img src=x>', category:'店舗' }] });
+  assert.doesNotMatch(escaped,/<script>|<img/);
 });
