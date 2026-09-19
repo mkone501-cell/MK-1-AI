@@ -112,22 +112,27 @@ function approvalDetail(a) { return `<div class="approval-detail"><span class="a
 function adsView() { return `<div class="page-head"><div><h2>広告案</h2><p>制作AIが作った案です。外部にはまだ公開されていません。</p></div><button class="primary" data-route="chat">＋ AI秘書に新しい案を依頼</button></div><div class="ads-grid">${state.adPlans.map((a,i)=>`<div class="card"><div class="ad-preview"><div><small>NORTH STAR BEANS</small><br><b>${safe(a.title)}</b></div></div>${statusPill(a.status)} <small>${safe(a.type)}</small><h3>${safe(a.title)}</h3><p style="color:var(--muted);font-size:13px;line-height:1.7">${safe(a.description)}</p><button class="secondary" data-ad="${a.id}">内容を見る</button></div>`).join('')}</div>`; }
 function reportsView() { const m=state.adMetrics[0], s=state.salesMetrics[0]; return `<div class="page-head"><div><h2>9月の分析レポート</h2><p>NORTH STAR BEANS ・ 2026年9月1日〜15日</p></div><button class="secondary" id="download-report">レポートを保存</button></div><div class="metrics">${metricCard('売上',yen(s.revenue),'↗ 前月比 18.4%','¥')}${metricCard('広告費',yen(m.spend),'予算内で進行中','◎')}${metricCard('購入数',`${m.conversions}件`,'↗ 前月比 12.7%','▣')}${metricCard('広告の効果',`${m.roas.toFixed(2)}倍`,'目標 3.0倍を達成','↗')}</div><div class="dashboard-grid"><div class="card"><div class="section-head"><h3>EC売上の推移</h3></div>${chart()}</div><div class="card"><h3>AIからの分かりやすいまとめ</h3><p style="line-height:1.8;color:var(--muted)">広告費1円あたり、約3.42円の売上につながっています。特に、一度商品を見たお客様への広告が好調です。</p><div class="notice"><strong>次の提案</strong><br>好調な広告を続けながら、新しい動画3案を少額で比較することをおすすめします。費用を使う前に承認をお願いします。</div></div></div>`; }
 function memoryCandidateView(item) {
-  return `<section class="memory-candidate notice" aria-label="長期記憶への登録候補"><strong>長期記憶への登録候補があります</strong><p>まだ登録していません。対象の店舗・事業と内容を確認してください。外部操作の承認ではありません。</p><small>${safe(item.category)}</small><h3>${safe(item.title)}</h3><p>${safe(item.body)}</p><p>登録理由：${safe(item.source)}</p><div class="knowledge-actions"><button type="button" class="primary" data-memory-accept="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>登録する</button><button type="button" class="secondary" data-memory-dismiss="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>今回は登録しない</button></div></section>`;
+  const updating = item.kind === 'update';
+  const review = item.kind === 'review' || item.kind === 'duplicate';
+  const heading = updating ? '長期記憶の更新候補があります' : review ? '長期記憶の確認が必要です' : '長期記憶への登録候補があります';
+  return `<section class="memory-candidate notice" aria-label="${heading}"><strong>${heading}</strong><p>まだ変更していません。対象の店舗・事業と内容を確認してください。外部操作の承認ではありません。</p><small>${safe(item.category)}</small><h3>${safe(item.title)}</h3>${updating ? `<p><strong>現在登録されている内容</strong></p><p>${safe(item.previousBody)}</p><p><strong>新しい内容</strong></p>` : ''}<p>${safe(item.body)}</p><p>${updating ? '更新理由' : '登録理由'}：${safe(item.reason || item.source)}</p><div class="knowledge-actions">${review ? '<button type="button" class="secondary" data-route="settings">設定で確認する</button>' : `<button type="button" class="primary" data-memory-accept="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>${updating ? '更新する' : '登録する'}</button>`}<button type="button" class="secondary" data-memory-dismiss="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>${updating ? '今回は更新しない' : '今回は登録しない'}</button></div></section>`;
 }
 
 async function decideMemoryCandidate(id, accept) {
   const item = memoryProposals.find(item => item.id === id);
   if (!serverConversation || !item || item.pending) return;
+  if (accept && (item.kind === 'review' || item.kind === 'duplicate')) return;
   if (!accept) { memoryProposals = memoryProposals.filter(value => value !== item); render(); return; }
   item.pending = true;
   render();
   try {
     const { category, title, body, source } = item;
-    const response = await fetch('api/knowledge', { method:'POST', headers:{ 'Content-Type':'application/json' },
-      body:JSON.stringify({ category, title, body, source, confirmed:true }) });
+    const updating = item.kind === 'update';
+    const response = await fetch(updating ? `api/knowledge/${item.knowledgeId}/approve-update` : 'api/knowledge', { method:'POST', headers:{ 'Content-Type':'application/json' },
+      body:JSON.stringify(updating ? { message:item.message, proposedBody:item.body, expectedRevision:item.expectedRevision, confirmed:true } : { category, title, body, source, confirmed:true }) });
     if (!response.ok) throw new Error('registration failed');
     memoryProposals = memoryProposals.filter(value => value !== item);
-    showToast('確認した内容を長期記憶に登録しました。');
+    showToast(item.kind === 'update' ? '確認した内容で長期記憶を更新しました。' : '確認した内容を長期記憶に登録しました。');
     await loadKnowledge();
   } catch { showToast('登録を確認できませんでした。設定の登録済み知識を確認してから再度お試しください。'); }
   finally { item.pending = false; render(); }

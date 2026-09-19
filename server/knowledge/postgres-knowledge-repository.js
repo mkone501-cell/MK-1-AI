@@ -1,6 +1,7 @@
 'use strict';
 
 const { randomUUID } = require('node:crypto');
+const { revision } = require('./update-candidates');
 const { searchPatterns, categoryPatterns, rankKnowledge, MAX_CANDIDATES } = require('./retrieval');
 
 const fields = 'id, category, title, body, source, active, created_at, updated_at';
@@ -51,6 +52,35 @@ class PostgresKnowledgeRepository {
       [ownerId, id]
     );
     return item(result.rows[0]) || null;
+  }
+
+  async candidateRecords(ownerId) {
+    const result = await this.pool.query(
+      `SELECT ${fields} FROM management_knowledge WHERE owner_id = $1 AND active = TRUE ORDER BY id LIMIT $2`, [ownerId, 201]);
+    return result.rows.map(item);
+  }
+
+  async approveUpdate(ownerId, id, value, expectedRevision) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const current = await client.query(`SELECT ${fields} FROM management_knowledge WHERE owner_id = $1 AND id = $2 AND active = TRUE FOR UPDATE`, [ownerId, id]);
+      const before = item(current.rows[0]);
+      if (!before || revision(before) !== expectedRevision) { await client.query('ROLLBACK'); return null; }
+      await client.query(
+        `INSERT INTO management_knowledge_revisions (id, knowledge_id, owner_id, previous_value, next_value)
+         VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)`,
+        [randomUUID(), id, ownerId, JSON.stringify(before), JSON.stringify(value)]);
+      const result = await client.query(
+        `UPDATE management_knowledge SET category = $3, title = $4, body = $5, source = $6, updated_at = NOW()
+         WHERE owner_id = $1 AND id = $2 AND active = TRUE RETURNING ${fields}`,
+        [ownerId, id, value.category, value.title, value.body, value.source]);
+      await client.query('COMMIT');
+      return item(result.rows[0]);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally { client.release(); }
   }
 
   async relevant(ownerId, question) {

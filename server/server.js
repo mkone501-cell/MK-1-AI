@@ -17,7 +17,7 @@ const { PostgresKnowledgeRepository } = require('./knowledge/postgres-knowledge-
 const { migrateKnowledge } = require('./knowledge/migrate-knowledge');
 const { validateKnowledge } = require('./knowledge/validation');
 const { knowledgeContext } = require('./knowledge/context');
-const { memoryCandidates } = require('./knowledge/candidates');
+const { proposeMemory } = require('./knowledge/update-candidates');
 
 const ROOT = path.resolve(__dirname, '..');
 const MAX_BODY_BYTES = 32 * 1024;
@@ -229,6 +229,32 @@ function createApplication(options = {}) {
       } catch { logger.error('knowledge.preview_failed'); return respondJson(req, res, 503, { error:'経営知識を検索できませんでした。' }); }
     }
 
+    const updateApproval = /^\/api\/knowledge\/([^/]+)\/approve-update$/.exec(url.pathname);
+    if (updateApproval) {
+      if (req.method !== 'POST') return respondJson(req, res, 405, { error:'この操作は利用できません。' });
+      if (!requestOriginAllowed(req, config)) return respondJson(req, res, 403, { error:'この画面からご利用ください。' });
+      const session = await requireOwner(req, res, { csrf:true });
+      if (!session) return;
+      if (!knowledge) return respondJson(req, res, 503, { error:'経営知識を利用できません。' });
+      if (!UUID.test(updateApproval[1])) return respondJson(req, res, 400, { error:'知識IDが正しくありません。' });
+      if (isRateLimited(req, 'knowledge', 10)) return respondJson(req, res, 429, { error:'時間をおいてお試しください。' });
+      try {
+        const body = await readJson(req);
+        if (body.confirmed !== true || typeof body.message !== 'string' || body.message.length > 500 ||
+            typeof body.expectedRevision !== 'string' || !/^[a-f0-9]{64}$/.test(body.expectedRevision) || typeof body.proposedBody !== 'string') {
+          return respondJson(req, res, 400, { error:'更新には内容の比較と本人の明示的な確認が必要です。' });
+        }
+        const candidates = await proposeMemory(body.message, knowledge, session.user.id, config, req);
+        const candidate = candidates.find(item => item.kind === 'update' && item.knowledgeId === updateApproval[1] &&
+          item.expectedRevision === body.expectedRevision && item.body === body.proposedBody);
+        if (!candidate) return respondJson(req, res, 409, { error:'情報が変更されたか対象を特定できません。最新の内容を再確認してください。' });
+        const value = validateKnowledge({ ...candidate, confirmed:true }, config, req);
+        if (!value || value === 'secret') return respondJson(req, res, 400, { error:'この内容は保存できません。' });
+        const updated = await knowledge.approveUpdate(session.user.id, candidate.knowledgeId, value, candidate.expectedRevision);
+        return respondJson(req, res, updated ? 200 : 409, updated ? { knowledge:updated } : { error:'情報が変更されました。最新の内容を再確認してください。' });
+      } catch { logger.error('knowledge.approval_failed'); return respondJson(req, res, 503, { error:'更新を確認できませんでした。設定画面で現在の情報を確認してください。' }); }
+    }
+
     const knowledgeRoute = /^\/api\/knowledge\/([^/]+)(\/disable)?$/.exec(url.pathname);
     if (url.pathname === '/api/knowledge' || knowledgeRoute) {
       const writing = req.method === 'PUT' || req.method === 'POST';
@@ -286,6 +312,11 @@ function createApplication(options = {}) {
               selectedKnowledge = (await selectKnowledge(session.user.id, message, req)).context;
             } catch { logger.error('knowledge.search_failed'); return respondJson(req, res, 503, { error:'経営情報を確認できませんでした。時間をおいてお試しください。' }); }
           }
+          let proposals = [];
+          if (knowledge) {
+            try { proposals = await proposeMemory(message, knowledge, session.user.id, config, req); }
+            catch { logger.error('knowledge.candidate_failed'); return respondJson(req, res, 503, { error:'既存の経営知識を確認できませんでした。時間をおいてお試しください。' }); }
+          }
           const result = await mirai.reply({ message, history, knowledge:selectedKnowledge });
           if (typeof result.answer !== 'string' || containsSecret(result.answer, config, req)) {
             logger.error('conversation.answer_rejected');
@@ -294,7 +325,7 @@ function createApplication(options = {}) {
           try {
             const conversationId = await conversations.appendExchange({ ownerId:session.user.id, conversationId:id, message, answer:result.answer });
             return respondJson(req, res, 200, { ...result, conversationId,
-              memoryCandidates:knowledge ? memoryCandidates(message, config, req) : [] });
+              memoryCandidates:proposals });
           } catch {
             logger.error('conversation.save_failed');
             return respondJson(req, res, 503, { error:'会話を保存できませんでした。時間をおいてお試しください。' });

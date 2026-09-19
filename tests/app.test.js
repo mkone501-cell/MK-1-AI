@@ -141,8 +141,29 @@ test('候補UIは確認項目をエスケープし、承認操作だけが登録
   assert.equal(writes[0].path, 'api/knowledge');
   assert.equal(JSON.parse(writes[0].options.body).confirmed, true);
   assert.equal(vm.runInContext('memoryProposals.length', context), 0);
+  vm.runInContext(`memoryProposals = [{ id:'u', kind:'update', knowledgeId:'knowledge-id', category:'店舗', title:'営業時間', previousBody:'旧', body:'新', message:'決定文', expectedRevision:'revision' }];`, context);
+  await vm.runInContext(`decideMemoryCandidate('u', false)`, context);
+  assert.equal(calls.filter(call => call.options?.method === 'POST').length, 1);
+  vm.runInContext(`memoryProposals = [{ id:'u', kind:'update', knowledgeId:'knowledge-id', category:'店舗', title:'営業時間', previousBody:'旧', body:'新', message:'決定文', expectedRevision:'revision' }];`, context);
+  await vm.runInContext(`decideMemoryCandidate('u', true)`, context);
+  const update = calls.find(call => call.path.endsWith('/approve-update'));
+  assert.equal(update.path, 'api/knowledge/knowledge-id/approve-update');
+  assert.deepEqual(JSON.parse(update.options.body), { message:'決定文', proposedBody:'新', expectedRevision:'revision', confirmed:true });
+  assert.equal(calls.filter(call => call.path === 'api/knowledge' && call.options?.method === 'POST').length, 1);
   vm.runInContext(`memoryProposals = [{ id:'3' }];`, context);
   await vm.runInContext('startNewConversation()', context);
   assert.equal(vm.runInContext('memoryProposals.length', context), 0);
-  assert.equal(calls.filter(call => call.options?.method === 'POST').length, 2); // only new conversation creation
+  assert.equal(calls.filter(call => call.options?.method === 'POST').length, 3); // registration, update approval, new conversation creation
+});
+
+
+test('更新候補は新旧を比較表示し、不確かな候補には登録・更新ボタンを出さない', () => {
+  const { memoryCandidateView } = require('../app.js');
+  const item = { id:'candidate', kind:'update', title:'店舗営業時間', category:'店舗',
+    previousBody:'平日9:00〜16:00', body:'平日10:00〜17:00', reason:'本人の決定' };
+  const html = memoryCandidateView(item);
+  for (const text of ['長期記憶の更新候補', '現在登録されている内容', '新しい内容', item.previousBody, item.body, '更新理由', '更新する', '今回は更新しない']) assert.ok(html.includes(text));
+  assert.doesNotMatch(html, />登録する</);
+  assert.match(memoryCandidateView({ ...item, previousBody:'<script>旧</script>' }), /&lt;script&gt;/);
+  for (const kind of ['review','duplicate']) assert.doesNotMatch(memoryCandidateView({ ...item, kind }), /data-memory-accept/);
 });
