@@ -48,12 +48,13 @@ function revision(item) {
 const normalize = value => value.normalize('NFKC').toLowerCase().replace(/\s+/g, '');
 
 async function proposeMemory(message, repository, ownerId, config, req) {
-  const initial = memoryCandidates(message, config, req);
+  const initial = memoryCandidates(message, config, req).map(item => ({ ...item, kind:'create' }));
   if (!initial.length) return [];
   const candidate = initial[0];
   // Fetch independently of the small AI context limit: never decide uniqueness from top search hits.
   const rows = await repository.candidateRecords(ownerId);
-  const review = () => [{ ...candidate, kind:'review', reason:'同じ対象・項目を安全に特定できません。設定画面で既存情報を確認してください。' }];
+  const review = (related = []) => [{ ...candidate, kind:'review', reason:related.length > 1 ? '複数の有効な既存知識が該当します。設定画面で整理してください。' : '同じ対象・項目を安全に特定できません。設定画面で整理してください。',
+    existingCount:related.length, existing:related.slice(0, 10).map(({ id, category, title, body }) => ({ id, category, title, body })) }];
   if (rows.length > 200) return review();
   const safeRows = rows.filter(row => {
     const checked = validateKnowledge({ ...row, confirmed:true }, config, req);
@@ -61,7 +62,7 @@ async function proposeMemory(message, repository, ownerId, config, req) {
   });
   if (safeRows.length !== rows.length) return review();
   const incoming = facts(message);
-  if (incoming.length !== 1) return rows.length ? review() : initial;
+  if (incoming.length !== 1) return rows.length ? review(safeRows.filter(row => normalize(row.category) === normalize(candidate.category))) : initial;
   const fact = incoming[0];
   const possible = safeRows.filter(row => normalize(row.category) === normalize(candidate.category)).flatMap(row => facts(row.body).filter(f => f.key === fact.key && f.scope === fact.scope && (!['monthly', 'annual'].includes(f.key) || /目標/.test(row.title + row.body))).map(f => ({ row, fact:f })));
   const target = normalize(fact.target);
@@ -73,9 +74,10 @@ async function proposeMemory(message, repository, ownerId, config, req) {
   });
   if (!matches.length) {
     // A known field with an unrecognized format/subject must not silently become duplicate knowledge.
-    return safeRows.some(row => (row.body + row.title).includes(fact.label)) ? review() : initial;
+    const related = safeRows.filter(row => (row.body + row.title).includes(fact.label));
+    return related.length ? review(related) : initial;
   }
-  if (matches.length !== 1) return review();
+  if (matches.length !== 1) return review([...new Map(matches.map(({ row }) => [row.id, row])).values()]);
   const { row, fact:old } = matches[0];
   if (normalize(old.value) === normalize(fact.value)) return [{ ...candidate, kind:'duplicate', reason:'同じ値がすでに登録されています。登録・更新は不要です。' }];
   const body = row.body.slice(0, old.start) + fact.value + row.body.slice(old.start + old.length);

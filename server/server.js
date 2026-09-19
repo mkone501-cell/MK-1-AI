@@ -285,7 +285,7 @@ function createApplication(options = {}) {
         if (!knowledgeRoute) {
           const proposals = await proposeMemory(value.body, knowledge, ownerId, config, req);
           if (proposals.some(item => ['update', 'review', 'duplicate'].includes(item.kind))) {
-            return respondJson(req, res, 409, { error:'既存情報との更新・重複の確認が必要です。会話の更新候補または設定画面で確認してください。', code:'KNOWLEDGE_REVIEW_REQUIRED' });
+            return respondJson(req, res, 409, { error:'既存情報との更新・重複の確認が必要です。会話の更新候補または設定画面で確認してください。', code:'KNOWLEDGE_REVIEW_REQUIRED', memoryCandidates:proposals });
           }
         }
         const item = knowledgeRoute ? await knowledge.update(ownerId, knowledgeRoute[1], value) : await knowledge.create(ownerId, value);
@@ -358,7 +358,7 @@ function createApplication(options = {}) {
     if (req.method === 'GET' && publicFiles.has(url.pathname)) {
       const file = path.join(ROOT, publicFiles.get(url.pathname));
       const type = contentTypes[path.extname(file)] || 'application/octet-stream';
-      res.writeHead(200, securityHeaders({ 'Content-Type': type, 'Cache-Control': 'public, max-age=300' }));
+      res.writeHead(200, securityHeaders({ 'Content-Type': type, 'Cache-Control': 'no-cache' }));
       return fs.createReadStream(file).pipe(res);
     }
 

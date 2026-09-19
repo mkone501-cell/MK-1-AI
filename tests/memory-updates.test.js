@@ -236,3 +236,55 @@ test('本番文の承認は同じIDと監査へ保存し、古い新規登録API
     assert.equal(f.audit.length,1);
   } finally { await new Promise(resolve=>server.close(resolve)); }
 });
+
+test('本番再現：句点付き変更文は2件なら比較付きreview、1件なら同一ID更新になる', async () => {
+  const f = fixture(), knowledge = new PostgresKnowledgeRepository(f.pool);
+  const a = entry('NORTH STAR BEANSの営業時間を平日9:00〜15:00、土日祝8:00〜17:00に変更する', { title:'営業時間の決定' });
+  const b = entry(a.body.replace('15:00','16:00'), { title:a.title });
+  f.add('a',a); f.add('a',b);
+  const foreign = entry(a.body, { title:'他人の非公開知識' }); f.add('b',foreign);
+  const sessions = new SessionStore({ secure:false });
+  const owner = await sessions.create({ id:'a', role:'owner' });
+  const server = createServer({ config, sessions, knowledge, auth:{ configured:true },
+    conversations:{ appendExchange:async()=>randomUUID() }, mirai:{ reply:async()=>({ answer:'確認してください。' }) } });
+  await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const post = (path, body) => fetch(base + path, { method:'POST', headers:{ 'Content-Type':'application/json', Cookie:`mk1_owner_session=${owner.token}`, 'X-CSRF-Token':owner.session.csrfToken }, body:JSON.stringify(body) });
+  try {
+    const message = 'NORTH STAR BEANSの平日の営業時間を9:00〜14:00に変更します。';
+    const before = JSON.stringify([...f.rows]);
+    const chat = await post('/api/chat', { message });
+    assert.equal(chat.status,200);
+    const candidates = (await chat.json()).memoryCandidates;
+    assert.equal(candidates[0].kind,'review');
+    assert.deepEqual(candidates[0].existing.map(i=>[i.id,i.title,i.body]), [a,b].map(i=>[i.id,i.title,i.body]));
+    const rejected = await post('/api/knowledge', { category:'店舗', title:a.title, body:message, source:'本人確認', confirmed:true });
+    assert.equal(rejected.status,409);
+    const denial = await rejected.json();
+    assert.equal(denial.code,'KNOWLEDGE_REVIEW_REQUIRED');
+    assert.deepEqual(denial.memoryCandidates,candidates);
+    assert.equal(JSON.stringify([...f.rows]),before);
+    assert.equal(f.audit.length,0);
+    // Simulate the owner's manual cleanup only in this fixture, never production.
+    f.rows.get(b.id).active = false;
+    const next = await post('/api/chat', { message });
+    const [update] = (await next.json()).memoryCandidates;
+    assert.equal(update.kind,'update');
+    assert.equal(update.knowledgeId,a.id);
+    assert.equal(update.previousBody,a.body);
+    assert.match(update.body,/平日9:00〜14:00、土日祝8:00〜17:00/);
+    const approved = await post(`/api/knowledge/${a.id}/approve-update`, { message, expectedRevision:update.expectedRevision, proposedBody:update.body, confirmed:true });
+    assert.equal(approved.status,200);
+    assert.equal((await approved.json()).knowledge.id,a.id);
+    assert.equal(f.rows.size,3);
+    assert.equal(f.audit.length,1);
+    assert.equal(JSON.parse(f.audit[0][3]).body,a.body);
+    assert.equal(f.rows.get(b.id).body,b.body);
+    const html = await fetch(base + '/');
+    assert.equal(html.headers.get('cache-control'),'no-cache');
+    assert.match(await html.text(),/app\.js\?v=phase54-review-2/);
+    const js = await fetch(base + '/app.js?v=phase54-review-2');
+    assert.equal(js.status,200);
+    assert.equal(js.headers.get('cache-control'),'no-cache');
+  } finally { await new Promise(resolve=>server.close(resolve)); }
+});
