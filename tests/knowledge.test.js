@@ -298,3 +298,80 @@ test('知識検索が失敗するとOpenAIを呼ばず安全な503を返し会�
     assert.doesNotMatch(JSON.stringify(logger), /private-db-pass/);
   });
 });
+
+test('設定の編集クリック→フォーム→確認→同じID保存、キャンセルと無効化を分離する', async () => {
+  const vm = require('node:vm'), fs = require('node:fs'), path = require('node:path');
+  const pool = fakePool(), knowledge = new PostgresKnowledgeRepository(pool);
+  const first = await knowledge.create('owner-a', { category:'店舗', title:'営業時間の決定', body:'平日9:00〜15:00、土日祝8:00〜17:00', source:'本人確認' });
+  const second = await knowledge.create('owner-a', { ...first, body:'平日9:00〜16:00、土日祝8:00〜17:00' });
+  const sessions = new SessionStore({ secure:false });
+  const owner = await sessions.create({ id:'owner-a', role:'owner' });
+  await withServer({ config:loadConfig({NODE_ENV:'test'}), sessions, knowledge, auth:{ configured:true } }, async base => {
+    const handlers = {}, calls = [], motions = [], buttons = [{ disabled:false }];
+    let agree = false, failSave = false;
+    const stub = () => ({ innerHTML:'', textContent:'', classList:{ add(){},remove(){},toggle(){} } });
+    const app = stub(), toast = stub();
+    const formNode = { scrollIntoView:()=>motions.push('scroll'), querySelector:()=>({ focus:()=>motions.push('focus') }) };
+    const context = vm.createContext({ module:{exports:{}}, console, Date, JSON, structuredClone, setTimeout:()=>0,
+      localStorage:{ getItem:()=>null, setItem(){} }, location:{hash:'#/settings'}, window:{addEventListener(){}},
+      confirm:()=>agree,
+      FormData:class { constructor(form){this.values=form.values;} get(key){return this.values[key] ?? null;} },
+      document:{querySelector:selector=>selector==='#app'?app:selector==='#toast'?toast:selector==='#knowledge-form'?formNode:stub(), querySelectorAll:()=>buttons,
+        addEventListener:(name,handler)=>{handlers[name]=handler;}},
+      fetch:async (route,options={})=>{
+        calls.push({route,options});
+        if(failSave && options.method==='PUT') return {ok:false,status:503};
+        return fetch(`${base}/${route}`, { ...options, headers:{...options.headers, Cookie:`mk1_owner_session=${owner.token}`, 'X-CSRF-Token':owner.session.csrfToken} });
+      }
+    });
+    vm.runInContext(fs.readFileSync(path.join(__dirname,'../app.js'),'utf8'),context);
+    vm.runInContext('serverConversation = true;',context);
+    await vm.runInContext('loadKnowledge()',context);
+    const click = (selector,dataset={})=>handlers.click({preventDefault(){},target:{closest:s=>s===selector?{dataset}:null}});
+    const writes = ()=>calls.filter(c=>['PUT','POST'].includes(c.options.method));
+    // Simulates a child inside the edit button; delegated closest identifies its parent.
+    click('[data-knowledge-edit]',{knowledgeEdit:first.id});
+    assert.deepEqual(motions,['scroll','focus']);
+    assert.match(app.innerHTML,/編集中：営業時間の決定/);
+    assert.ok(app.innerHTML.includes(`data-knowledge-id="${first.id}"`));
+    for(const value of [first.category,first.title,first.body,first.source]) assert.ok(app.innerHTML.includes(value));
+    assert.equal(writes().length,0);
+    const makeForm = (id, confirmed=true)=>({id:'knowledge-form',dataset:{knowledgeId:id},values:{category:'店舗',title:'営業時間の決定',body:'平日9:00〜14:00、土日祝8:00〜17:00',source:'本人が画面で確認',...(confirmed?{confirmed:'on'}:{})}});
+    await handlers.submit({preventDefault(){},target:makeForm(first.id,false)});
+    assert.equal(writes().length,0);
+    click('#cancel-knowledge-edit');
+    assert.match(app.innerHTML,/新しい経営知識を登録/);
+    assert.equal(pool.data.get(first.id).body,first.body);
+    assert.equal(writes().length,0);
+    click('[data-knowledge-edit]',{knowledgeEdit:first.id});
+    await handlers.submit({preventDefault(){},target:makeForm(second.id)}); // stale/mismatched form cannot change another ID
+    assert.equal(writes().length,0);
+    failSave=true;
+    await handlers.submit({preventDefault(){},target:makeForm(first.id)});
+    assert.equal(vm.runInContext('editingKnowledgeId',context),first.id);
+    assert.equal(pool.data.get(first.id).body,first.body);
+    assert.equal(buttons[0].disabled,false);
+    failSave=false;
+    const saving=handlers.submit({preventDefault(){},target:makeForm(first.id)});
+    click('[data-knowledge-edit]',{knowledgeEdit:second.id});
+    await handlers.submit({preventDefault(){},target:makeForm(first.id)}); // double submit blocked
+    await saving;
+    assert.equal(pool.data.size,2);
+    assert.equal(pool.data.get(first.id).body,'平日9:00〜14:00、土日祝8:00〜17:00');
+    assert.equal(pool.data.get(first.id).source,'本人が画面で確認');
+    assert.equal(pool.data.get(second.id).body,second.body);
+    assert.equal(writes().filter(c=>c.options.method==='PUT').length,2); // one failed + one saved
+    assert.equal(writes().some(c=>c.route==='api/knowledge'),false);
+    assert.equal(vm.runInContext('editingKnowledgeId',context),null);
+    await click('[data-knowledge-disable]',{knowledgeDisable:second.id}); // declined
+    assert.equal(pool.data.get(second.id).active,true);
+    agree=true;
+    await click('[data-knowledge-disable]',{knowledgeDisable:second.id});
+    assert.equal(pool.data.get(second.id).active,false);
+    assert.equal(pool.data.get(first.id).active,true);
+    assert.equal(pool.data.size,2);
+    assert.equal(writes().filter(c=>c.route.endsWith('/disable')).length,1);
+    click('[data-knowledge-edit]',{knowledgeEdit:second.id});
+    assert.equal(vm.runInContext('editingKnowledgeId',context),null);
+  });
+});

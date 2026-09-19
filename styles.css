@@ -77,3 +77,8 @@ main { min-width: 0; }.topbar { height: 90px; padding: 20px 34px; display: flex;
 
 .memory-candidate { margin:12px 20px; min-width:0; overflow-wrap:anywhere; flex-shrink:0; }
 .memory-candidate .knowledge-actions { justify-content:flex-start; }
+
+#knowledge-form { scroll-margin-top:110px; }
+#knowledge-form textarea { width:100%; min-height:140px; resize:vertical; }
+/* Status messages have no actions and must not intercept card button clicks. */
+.toast { pointer-events:none; }

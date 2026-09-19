@@ -54,6 +54,7 @@ let knowledgeItems = [];
 let memoryProposals = [];
 let proposalSequence = 0;
 let editingKnowledgeId = null;
+let knowledgeMutationPending = false;
 
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function loadState() {
@@ -154,7 +155,7 @@ function knowledgeView(enabled = serverConversation) {
   if (!enabled) return '';
   const editing = knowledgeItems.find(item => item.id === editingKnowledgeId && item.active);
   return `<div class="card" style="margin-top:20px"><div class="section-head"><h3>経営知識（長期記憶）</h3></div><p>登録を確認した情報だけを保存します。会話から自動登録しません。パスワード・APIキー・秘密情報は入力しないでください。</p>
-    <form id="knowledge-form"><div class="form-grid"><div class="field"><label>カテゴリ</label><input name="category" list="knowledge-categories" maxlength="40" value="${safe(editing?.category || '')}" required><datalist id="knowledge-categories">${['会社基本情報','事業','店舗','商品','顧客','スタッフ','経営方針','承認ルール','不動産','財務','EC','広告','その他'].map(value=>`<option value="${value}">`).join('')}</datalist></div><div class="field"><label>タイトル</label><input name="title" maxlength="120" value="${safe(editing?.title || '')}" required></div></div><div class="field"><label>本文</label><textarea name="body" maxlength="3000" required>${safe(editing?.body || '')}</textarea></div><div class="field"><label>情報源・登録理由</label><input name="source" maxlength="500" value="${safe(editing?.source || '')}" required></div><div class="field"><label><input type="checkbox" name="confirmed" required> 内容を確認し、長期知識として${editing ? '更新' : '登録'}します</label></div><button class="primary" type="submit">${editing ? '知識を更新' : '知識を登録'}</button> ${editing ? '<button class="secondary" type="button" id="cancel-knowledge-edit">編集をやめる</button>' : ''}</form>
+    <form id="knowledge-form" data-knowledge-id="${safe(editing?.id || '')}" aria-labelledby="knowledge-form-heading"><h3 id="knowledge-form-heading">${editing ? `編集中：${safe(editing.title)}` : '新しい経営知識を登録'}</h3>${editing ? '<p role="status">下の内容を変更し、確認欄にチェックして「知識を更新」を押してください。保存するまで変更されません。</p>' : ''}<div class="form-grid"><div class="field"><label>カテゴリ</label><input name="category" list="knowledge-categories" maxlength="40" value="${safe(editing?.category || '')}" required><datalist id="knowledge-categories">${['会社基本情報','事業','店舗','商品','顧客','スタッフ','経営方針','承認ルール','不動産','財務','EC','広告','その他'].map(value=>`<option value="${value}">`).join('')}</datalist></div><div class="field"><label>タイトル</label><input name="title" maxlength="120" value="${safe(editing?.title || '')}" required></div></div><div class="field"><label>本文</label><textarea name="body" maxlength="3000" required>${safe(editing?.body || '')}</textarea></div><div class="field"><label>情報源・登録理由</label><input name="source" maxlength="500" value="${safe(editing?.source || '')}" required></div><div class="field"><label><input type="checkbox" name="confirmed" required> 内容を確認し、長期知識として${editing ? '更新' : '登録'}します</label></div><button class="primary" type="submit">${editing ? '知識を更新' : '知識を登録'}</button> ${editing ? '<button class="secondary" type="button" id="cancel-knowledge-edit">キャンセル</button>' : ''}</form>
     <div style="margin-top:20px"><h3>質問で参照される知識を確認</h3><p>AIへ送信せずに、現在の質問で選ばれる知識のタイトルだけを確認します。例：私が経営しているコーヒー店について教えてください</p><div class="field"><label for="knowledge-preview-question">質問</label><input id="knowledge-preview-question" maxlength="8000"></div><button class="secondary" type="button" id="knowledge-preview-button">参照する知識を確認</button><div id="knowledge-preview-result" aria-live="polite"></div></div>
     <div style="margin-top:20px"><h3>登録済みの知識</h3>${knowledgeItems.length ? knowledgeItems.map(knowledgeItemView).join('') : '<p>登録された経営知識はまだありません。</p>'}</div></div>`;
 }
@@ -270,20 +271,68 @@ async function loadKnowledge() {
     const response = await fetch('api/knowledge', { credentials:'same-origin', cache:'no-store' });
     if (!response.ok) throw new Error('knowledge unavailable');
     knowledgeItems = (await response.json()).knowledge;
-    if (currentRoute === 'settings') render();
+    if (currentRoute === 'settings' && !editingKnowledgeId) render();
   } catch { showToast('経営知識を読み込めませんでした。'); }
 }
+function beginKnowledgeEdit(id) {
+  if (!serverConversation || knowledgeMutationPending) return;
+  const item = knowledgeItems.find(item => item.id === id && item.active);
+  if (!item) { showToast('編集できる知識が見つかりません。画面を再読み込みしてください。'); return; }
+  editingKnowledgeId = item.id;
+  render();
+  const form = document.querySelector('#knowledge-form');
+  form?.scrollIntoView({ behavior:'auto', block:'start' });
+  form?.querySelector('[name="category"]')?.focus({ preventScroll:true });
+  showToast('編集フォームを開きました。内容を確認して保存してください。');
+}
+function cancelKnowledgeEdit() {
+  if (knowledgeMutationPending) return;
+  editingKnowledgeId = null;
+  render();
+  showToast('編集をキャンセルしました。変更は保存していません。');
+}
+function setKnowledgePending(pending) {
+  knowledgeMutationPending = pending;
+  document.querySelectorAll('#knowledge-form button, [data-knowledge-edit], [data-knowledge-disable]').forEach(button => { button.disabled = pending; });
+}
 async function saveKnowledge(form) {
+  if (!serverConversation || knowledgeMutationPending) return;
+  const id = form.dataset.knowledgeId || null;
+  if (id !== editingKnowledgeId || (id && !knowledgeItems.some(item => item.id === id && item.active))) {
+    throw new Error('編集対象を確認できません。もう一度編集ボタンから開いてください。');
+  }
   const data = new FormData(form);
   const value = { category:data.get('category'), title:data.get('title'), body:data.get('body'), source:data.get('source'), confirmed:data.get('confirmed') !== null };
-  const response = await fetch(editingKnowledgeId ? `api/knowledge/${editingKnowledgeId}` : 'api/knowledge', {
-    method:editingKnowledgeId ? 'PUT' : 'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(value)
-  });
-  if (!response.ok) { const error=await response.json(); throw new Error(error.error || '登録できませんでした。'); }
-  editingKnowledgeId = null;
-  await loadKnowledge();
-  showToast('経営知識を保存しました。');
+  if (!value.confirmed) throw new Error('内容を確認し、確認欄にチェックしてください。');
+  setKnowledgePending(true);
+  try {
+    const response = await fetch(id ? `api/knowledge/${id}` : 'api/knowledge', {
+      method:id ? 'PUT' : 'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(value)
+    });
+    if (!response.ok) throw new Error('保存できませんでした。入力内容とログイン状態を確認してください。');
+    editingKnowledgeId = null;
+    await loadKnowledge();
+    render();
+    showToast(id ? '選択した経営知識を更新しました。' : '経営知識を保存しました。');
+  } finally { setKnowledgePending(false); }
 }
+async function disableKnowledge(id) {
+  if (!serverConversation || knowledgeMutationPending) return;
+  const item = knowledgeItems.find(item => item.id === id && item.active);
+  if (!item) { showToast('無効化できる知識が見つかりません。'); return; }
+  if (!confirm(`「${item.title}」を無効化しますか？\n${item.body}\n会話履歴や他の知識は削除されません。`)) return;
+  setKnowledgePending(true);
+  try {
+    const response = await fetch(`api/knowledge/${id}/disable`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ confirmed:true }) });
+    if (!response.ok) throw new Error('disable failed');
+    if (editingKnowledgeId === id) editingKnowledgeId = null;
+    await loadKnowledge();
+    if (!editingKnowledgeId) render();
+    showToast('選択した経営知識を無効化しました。');
+  } catch { showToast('無効化できませんでした。画面で現在の状態を確認してください。'); }
+  finally { setKnowledgePending(false); }
+}
+
 async function previewKnowledge(question) {
   question = question.trim();
   if (!question) { showToast('確認したい質問を入力してください。'); return; }
@@ -304,6 +353,12 @@ async function previewKnowledge(question) {
 function decideApproval(id, decision) { const a=state.approvals.find(x=>x.id===id); if(!a)return; a.status=decision; a.decidedAt=new Date().toISOString(); state.auditLog.unshift({ id:`log-${Date.now()}`, actor:state.settings.ownerName, action:decision, target:a.title, createdAt:a.decidedAt }); saveState(); showToast(`${a.title}を「${decision}」として記録しました。`); render(); }
 
 document.addEventListener('click', e => {
+  const edit = e.target.closest('[data-knowledge-edit]');
+  if (edit) { e.preventDefault(); beginKnowledgeEdit(edit.dataset.knowledgeEdit); return; }
+  if (e.target.closest('#cancel-knowledge-edit')) { e.preventDefault(); cancelKnowledgeEdit(); return; }
+  const disable = e.target.closest('[data-knowledge-disable]');
+  if (disable) { e.preventDefault(); return disableKnowledge(disable.dataset.knowledgeDisable); }
+
   const acceptMemory = e.target.closest('[data-memory-accept]');
   if (acceptMemory) decideMemoryCandidate(acceptMemory.dataset.memoryAccept, true);
   const dismissMemory = e.target.closest('[data-memory-dismiss]');
@@ -319,19 +374,12 @@ document.addEventListener('click', e => {
   if(e.target.closest('[data-ad]')) showToast('広告案の詳細画面は次のバージョンで追加します。');
   if(e.target.closest('#download-report')) showToast('レポート保存機能は次のバージョンで追加します。');
   if(e.target.closest('#reset-data') && confirm('入力・承認履歴をお試しデータに戻しますか？')) { state=clone(initialState); saveState(); render(); showToast('お試しデータに戻しました。'); }
-  const edit=e.target.closest('[data-knowledge-edit]'); if(edit) { editingKnowledgeId=edit.dataset.knowledgeEdit; render(); }
-  if(e.target.closest('#cancel-knowledge-edit')) { editingKnowledgeId=null; render(); }
-  const disable=e.target.closest('[data-knowledge-disable]');
-  if(disable && confirm('この経営知識を無効化しますか？ 会話履歴や他の知識は削除されません。')) {
-    fetch(`api/knowledge/${disable.dataset.knowledgeDisable}/disable`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ confirmed:true }) })
-      .then(response=>{ if(!response.ok) throw new Error(); return loadKnowledge(); })
-      .then(()=>showToast('経営知識を無効化しました。')).catch(()=>showToast('無効化できませんでした。'));
-  }
+
 });
 document.addEventListener('submit', e => {
   if(e.target.id==='chat-form') { e.preventDefault(); handleChat(document.querySelector('#chat-input').value); }
   if(e.target.id==='settings-form') { e.preventDefault(); const data=new FormData(e.target); state.settings.companyName=data.get('companyName'); state.settings.ownerName=data.get('ownerName'); saveState(); showToast('設定を保存しました。'); }
-  if(e.target.id==='knowledge-form') { e.preventDefault(); saveKnowledge(e.target).catch(error=>showToast(error.message)); }
+  if(e.target.id==='knowledge-form') { e.preventDefault(); return saveKnowledge(e.target).catch(error=>showToast(error.message)); }
 });
 window.addEventListener('hashchange',()=>{ currentRoute=location.hash.replace('#/','')||'home'; render(); });
 render();
