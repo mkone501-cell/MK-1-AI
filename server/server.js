@@ -281,6 +281,13 @@ function createApplication(options = {}) {
         const value = validateKnowledge(body, config, req);
         if (value === 'secret') return respondJson(req, res, 400, { error:'認証情報の可能性がある内容は登録できません。' });
         if (!value) return respondJson(req, res, 400, { error:'カテゴリ・タイトル・本文・情報源と確認が必要です。' });
+        // Recheck even submissions from a stale Phase 5.3 UI: never turn an update into an insert.
+        if (!knowledgeRoute) {
+          const proposals = await proposeMemory(value.body, knowledge, ownerId, config, req);
+          if (proposals.some(item => ['update', 'review', 'duplicate'].includes(item.kind))) {
+            return respondJson(req, res, 409, { error:'既存情報との更新・重複の確認が必要です。会話の更新候補または設定画面で確認してください。', code:'KNOWLEDGE_REVIEW_REQUIRED' });
+          }
+        }
         const item = knowledgeRoute ? await knowledge.update(ownerId, knowledgeRoute[1], value) : await knowledge.create(ownerId, value);
         return respondJson(req, res, item ? knowledgeRoute ? 200 : 201 : 404, item ? { knowledge:item } : { error:'知識が見つかりません。' });
       } catch { logger.error('knowledge.request_failed'); return respondJson(req, res, 503, { error:'経営知識を処理できませんでした。時間をおいてお試しください。' }); }

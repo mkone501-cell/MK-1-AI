@@ -37,7 +37,7 @@ test('目標・価格・スタッフ体制・定休日・物件の項目を対�
     ['北品川ビルの家賃は月200万円', '北品川ビルの家賃を220万円に変更する', '北品川ビルの家賃は月220万円'],
     ['北品川ビルの面積は100㎡', '北品川ビルの面積を110㎡に変更する', '北品川ビルの面積は110㎡']
   ]) {
-    const [candidate] = await proposeMemory(change, repoOf([entry(body)]), 'a', config);
+    const [candidate] = await proposeMemory(change, repoOf([entry(body, { category:require('../server/knowledge/candidates').memoryCandidates(change, config)[0].category })]), 'a', config);
     assert.equal(candidate.kind, expected ? 'update' : 'review', change);
     if (expected) assert.equal(candidate.body, expected);
   }
@@ -168,4 +168,71 @@ test('更新承認APIは明示承認・CSRF・所有者・改変・期限中の�
     assert.equal((await post(owner)).status, 409); // repeated or stale approval
     assert.equal(f.rows.get(old.id).body, candidate.body);
   } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
+test('本番の決定文・汎用タイトルでも店舗と営業時間を照合し土日祝日を保持する', async () => {
+  const old = entry('NORTH STAR BEANSの営業時間を平日9:00〜16:00、土日祝日8:00〜17:00に変更する', { title:'営業時間の決定' });
+  const text = 'NORTH STAR BEANSの平日の営業時間を9:00〜15:00に変更します';
+  const [candidate] = await proposeMemory(text, repoOf([old]), 'a', config);
+  assert.equal(candidate.kind, 'update');
+  assert.equal(candidate.knowledgeId, old.id);
+  assert.equal(candidate.body, 'NORTH STAR BEANSの営業時間を平日9:00〜15:00、土日祝日8:00〜17:00に変更する');
+  assert.equal(candidate.previousBody, old.body);
+  const { facts } = require('../server/knowledge/update-candidates');
+  assert.deepEqual(facts(old.body).map(f => [f.scope, f.target]), [['平日','NORTH STAR BEANS'],['土日祝','NORTH STAR BEANS']]);
+  const [weekend] = await proposeMemory('NORTH STAR BEANSの土日祝の営業時間を8:00〜18:00に変更します', repoOf([old]), 'a', config);
+  assert.equal(weekend.kind, 'update');
+  assert.match(weekend.body, /平日9:00〜16:00、土日祝日8:00〜18:00/);
+  const conflict = entry(old.body.replace('16:00','15:00'), { title:old.title });
+  assert.equal((await proposeMemory(text, repoOf([old, conflict]), 'a', config))[0].kind, 'review');
+  assert.equal(old.active, true);
+  assert.equal(conflict.active, true);
+});
+
+test('同じタイトルでも店舗・カテゴリ・項目が違う知識を更新しない', async () => {
+  const text = 'NORTH STAR BEANSの平日の営業時間を9:00〜15:00に変更します';
+  for (const old of [
+    entry('別店舗の営業時間は平日9:00〜16:00', { title:'営業時間の決定' }),
+    entry(original, { category:'不動産', title:'営業時間の決定' }),
+    entry('別店舗の営業時間は平日9:00〜16:00', { title:'NORTH STAR BEANS' }),
+    entry('NORTH STAR BEANSの定休日は木曜日', { title:'営業時間の決定' })
+  ]) assert.notEqual((await proposeMemory(text, repoOf([old]), 'a', config))[0].kind, 'update');
+});
+
+test('本番文の承認は同じIDと監査へ保存し、古い新規登録API経由では重複を拒否する', async () => {
+  const f = fixture(), knowledge = new PostgresKnowledgeRepository(f.pool);
+  const old = entry('NORTH STAR BEANSの営業時間を平日9:00〜16:00、土日祝日8:00〜17:00に変更する', { title:'営業時間の決定' });
+  f.add('a', old);
+  const sessions = new SessionStore({ secure:false });
+  const owner = await sessions.create({ id:'a', role:'owner' });
+  const server = createServer({ config, sessions, knowledge, auth:{ configured:true },
+    conversations:{ appendExchange:async()=>randomUUID() }, mirai:{ reply:async()=>({ answer:'確認してください。' }) } });
+  await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const post = (path, body) => fetch(base + path, { method:'POST', headers:{ 'Content-Type':'application/json', Cookie:`mk1_owner_session=${owner.token}`, 'X-CSRF-Token':owner.session.csrfToken }, body:JSON.stringify(body) });
+  try {
+    const message = 'NORTH STAR BEANSの平日の営業時間を9:00〜15:00に変更します';
+    const response = await post('/api/chat', { message });
+    assert.equal(response.status, 200);
+    const [candidate] = (await response.json()).memoryCandidates;
+    assert.equal(candidate.kind,'update');
+    assert.equal(f.rows.get(old.id).body, old.body);
+    assert.equal(f.audit.length, 0);
+    const stale = await post('/api/knowledge', { category:'店舗', title:'営業時間の決定', body:message, source:'本人確認', confirmed:true });
+    assert.equal(stale.status,409);
+    const approved = await post(`/api/knowledge/${old.id}/approve-update`, { message, proposedBody:candidate.body, expectedRevision:candidate.expectedRevision, confirmed:true });
+    assert.equal(approved.status,200);
+    assert.equal((await approved.json()).knowledge.id,old.id);
+    assert.equal(f.rows.size,1);
+    assert.equal(f.audit.length,1);
+    assert.equal(JSON.parse(f.audit[0][3]).body,old.body);
+    assert.equal(f.rows.get(old.id).body,candidate.body);
+    assert.equal(f.calls.some(c => /^INSERT INTO management_knowledge\s/.test(c.sql)),false);
+    const duplicate = entry(old.body, { title:old.title });
+    f.add('a', duplicate);
+    const before = JSON.stringify([...f.rows]);
+    assert.equal((await post('/api/knowledge', { category:'店舗', title:'営業時間の決定', body:message, source:'本人確認', confirmed:true })).status,409);
+    assert.equal(JSON.stringify([...f.rows]),before);
+    assert.equal(f.audit.length,1);
+  } finally { await new Promise(resolve=>server.close(resolve)); }
 });
