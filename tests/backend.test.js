@@ -49,6 +49,29 @@ test('APIキーはサーバーからOpenAIへの認証だけに使用する', as
   assert.doesNotMatch(JSON.stringify(result), /test-secret-key/);
 });
 
+test('単純な知識確認には短い直接回答を促し、定型フォーマットを強制しない', async () => {
+  let payload;
+  const service = new MiraiService({
+    apiKey: 'test-secret-key',
+    model: 'test-model',
+    fetchImpl: async (_url, options) => {
+      payload = JSON.parse(options.body);
+      return { ok: true, json: async () => ({ output_text: '登録されている好きな数字は777です。' }) };
+    }
+  });
+  const result = await service.reply({
+    message: '私の好きな数字は何番ですか？',
+    knowledge: [{ category:'会社基本情報', title:'代表の好きな数字', body:'代表の好きな数字は777です。', source:'本人確認' }]
+  });
+  assert.equal(result.answer, '登録されている好きな数字は777です。');
+  assert.match(payload.instructions, /通常は1〜2文/);
+  assert.match(payload.instructions, /定型フォーマットを毎回使わない/);
+  assert.match(payload.instructions, /頼まれていない補足、確認質問、次の作業の提案も付けない/);
+  assert.match(payload.instructions, /説明を求められた質問には必要な範囲で詳しく答えてください/);
+  assert.match(JSON.stringify(payload.input), /777/);
+  assert.equal(result.approval.required, false);
+});
+
 test('OpenAIエラーは秘密を含めず安全な分類だけを保持する', async () => {
   const service = new MiraiService({
     apiKey: 'never-log-this-secret',
