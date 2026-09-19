@@ -5,7 +5,7 @@ const { validateKnowledge } = require('./validation');
 
 // Each descriptor defines a fact, not a whole document. Extend here for new fields.
 const descriptors = [
-  { key:'hours', label:'営業時間', re:/(平日|土日祝|土日|祝日)?(?:の)?営業時間(?:は|を|：|:)?\s*(平日|土日祝|土日|祝日)?\s*(\d{1,2}:\d{2}[〜～~\-]\d{1,2}:\d{2})/g },
+  { key:'hours', label:'営業時間', re:/(平日|土日祝日|土日祝|土日|祝日)?(?:の)?営業時間(?:は|を|：|:)?\s*(平日|土日祝日|土日祝|土日|祝日)?\s*(\d{1,2}:\d{2}[〜～~\-]\d{1,2}:\d{2})/g },
   { key:'day', label:'定休日', re:/定休日(?:は|を|：|:)\s*([月火水木金土日]曜日)/g },
   { key:'monthly', label:'月商', re:/月商(?:目標)?(?:は|を|：|:)?\s*(\d+(?:\.\d+)?万?円)/g },
   { key:'annual', label:'年商', re:/年商(?:目標)?(?:は|を|：|:)?\s*(\d+(?:\.\d+)?万?円)/g },
@@ -16,21 +16,24 @@ const descriptors = [
   { key:'area', label:'面積', re:/面積(?:は|を|：|:)?\s*(\d+(?:\.\d+)?(?:㎡|平米))/g }
 ];
 
+const normalizeScope = scope => scope === '土日祝日' ? '土日祝' : scope;
+
 function facts(text) {
   const found = [];
   for (const d of descriptors) {
     const re = new RegExp(d.re.source, 'g');
     for (const match of text.matchAll(re)) {
       const value = match.at(-1);
-      const scope = d.key === 'hours' ? (match[1] || match[2] || '全日') : '';
+      const scope = d.key === 'hours' ? normalizeScope(match[1] || match[2] || '全日') : '';
       found.push({ key:d.key, scope, value, start:match.index + match[0].lastIndexOf(value), length:value.length,
         target:text.slice(0, match.index).replace(/の$/, '').trim(), label:d.label });
     }
   }
+  const hourTargets = [...new Set(found.filter(f => f.key === 'hours' && f.target).map(f => f.target))];
   // Hours listed after an initial heading, e.g. 営業時間は平日...、土日祝... .
-  if (/営業時間/.test(text)) for (const m of text.matchAll(/(平日|土日祝|土日|祝日)\s*(\d{1,2}:\d{2}[〜～~\-]\d{1,2}:\d{2})/g)) {
+  if (/営業時間/.test(text)) for (const m of text.matchAll(/(平日|土日祝日|土日祝|土日|祝日)\s*(\d{1,2}:\d{2}[〜～~\-]\d{1,2}:\d{2})/g)) {
     const start = m.index + m[0].lastIndexOf(m[2]);
-    if (!found.some(f => f.start === start)) found.push({ key:'hours', scope:m[1], value:m[2], start, length:m[2].length, target:'', label:'営業時間' });
+    if (!found.some(f => f.start === start)) found.push({ key:'hours', scope:normalizeScope(m[1]), value:m[2], start, length:m[2].length, target:hourTargets.length === 1 ? hourTargets[0] : '', label:'営業時間' });
   }
   for (const m of text.matchAll(/([月火水木金土日]曜日)を定休日に/g)) {
     found.push({ key:'day', scope:'', value:m[1], start:m.index, length:m[1].length,
@@ -60,11 +63,14 @@ async function proposeMemory(message, repository, ownerId, config, req) {
   const incoming = facts(message);
   if (incoming.length !== 1) return rows.length ? review() : initial;
   const fact = incoming[0];
-  const possible = safeRows.flatMap(row => facts(row.body).filter(f => f.key === fact.key && f.scope === fact.scope && (!['monthly', 'annual'].includes(f.key) || /目標/.test(row.title + row.body))).map(f => ({ row, fact:f })));
+  const possible = safeRows.filter(row => normalize(row.category) === normalize(candidate.category)).flatMap(row => facts(row.body).filter(f => f.key === fact.key && f.scope === fact.scope && (!['monthly', 'annual'].includes(f.key) || /目標/.test(row.title + row.body))).map(f => ({ row, fact:f })));
   const target = normalize(fact.target);
-  const matches = possible.filter(({ row, fact:old }) => !target ||
-    normalize(old.target) === target || normalize(row.title) === target ||
-    normalize(row.title) === target + normalize(fact.label));
+  const matches = possible.filter(({ row, fact:old }) => {
+    if (!target) return true;
+    // An explicit subject in the body takes precedence over the document title.
+    if (old.target) return normalize(old.target) === target;
+    return normalize(row.title) === target || normalize(row.title) === target + normalize(fact.label);
+  });
   if (!matches.length) {
     // A known field with an unrecognized format/subject must not silently become duplicate knowledge.
     return safeRows.some(row => (row.body + row.title).includes(fact.label)) ? review() : initial;
