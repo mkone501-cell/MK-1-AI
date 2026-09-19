@@ -78,7 +78,7 @@ function rankKnowledge(rows, question) {
   const { direct, expanded, topics:matchedTopics } = queryTerms(question);
   const terms = [...direct, ...expanded];
   if (!terms.length) return [];
-  const distinctive = direct.filter(term => !['経営', '教えて', 'について'].includes(term) &&
+  const distinctive = direct.filter(term => !['経営', '教えて', 'について', '基本', '情報', '現在', '登録', '知りたい', 'ください'].includes(term) &&
     !matchedTopics.some(topic => topic.words.some(word => word.normalize('NFKC').toLowerCase().includes(term.toLowerCase()))));
   const candidates = rows.map(row => {
     const title = String(row.title || '').normalize('NFKC').toLowerCase();
@@ -99,9 +99,14 @@ function rankKnowledge(rows, question) {
     return { row, hits, specific, score:[...hits.values()].reduce((sum, value) => sum + value, 0) };
   }).filter(entry => entry.score > 0);
 
-  // 物件名などが一致する知識があれば、同じカテゴリの「カテゴリだけ一致」は除く。
+  // 物件名などが一致する知識があれば、一般語だけで一致した別分野の知識は除く。
+  // ただし質問に対応する主カテゴリ・関連カテゴリは、複数知識の回答のため残す。
   const specificCategories = new Set(candidates.filter(entry => entry.specific).map(entry => entry.row.category));
-  const relevant = candidates.filter(entry => entry.specific || !specificCategories.has(entry.row.category));
+  const topicCategories = new Set(matchedTopics.flatMap(topic => topic.categories.concat(topic.related)));
+  const hasSpecific = specificCategories.size > 0;
+  const relevant = hasSpecific
+    ? candidates.filter(entry => entry.specific || (topicCategories.has(entry.row.category) && !specificCategories.has(entry.row.category)))
+    : candidates.filter(entry => entry.specific || !specificCategories.has(entry.row.category));
 
   const selected = [], covered = new Set();
   while (selected.length < MAX_RESULTS && relevant.length) {

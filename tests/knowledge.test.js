@@ -141,6 +141,20 @@ test('コーヒー店などの表現から店舗・会社・事業の知識を�
   assert.deepEqual((await repo.relevant('owner-b', '私のコーヒー店について')).map(item => item.body), ['他人の情報']);
 });
 
+test('営業時間と基本情報を尋ねると複数の有効知識を選び、無効な旧知識と無関係な知識を除く', async () => {
+  const pool = fakePool(), repo = new PostgresKnowledgeRepository(pool);
+  const hours = await repo.create('owner-a', { category:'店舗', title:'NORTH STAR BEANSの営業時間', body:'平日9:00〜15:00、土日祝8:00〜17:00', source:'本人確認' });
+  const company = await repo.create('owner-a', { category:'会社基本情報', title:'NORTH STAR BEANS基本情報', body:'北品川で専門コーヒー店を運営', source:'本人確認' });
+  const oldHours = await repo.create('owner-a', { category:'店舗', title:'NORTH STAR BEANSの旧営業時間', body:'平日9:00〜16:00', source:'過去の記録' });
+  await repo.disable('owner-a', oldHours.id);
+  await repo.create('owner-a', { category:'不動産', title:'関係ない物件', body:'別の賃貸借情報', source:'本人確認' });
+  const found = await repo.relevant('owner-a', 'NORTH STAR BEANSの現在の営業時間と基本情報を教えて');
+  assert.deepEqual(new Set(found.map(item => item.id)), new Set([hours.id, company.id]));
+  assert.equal(found.some(item => item.id === oldHours.id), false);
+  assert.equal(found.some(item => item.title === '関係ない物件'), false);
+  assert.ok(knowledgeContext(found).length <= 4);
+});
+
 test('固有名詞の英語と日本語を分割し、カテゴリがその他でも本人の名称を検索する', async () => {
   const pool = fakePool(), repo = new PostgresKnowledgeRepository(pool);
   const brand = await repo.create('owner-a', { category:'その他', title:'NORTH STAR BEANS', body:'北品川で営業、席数30', source:'本人確認' });
