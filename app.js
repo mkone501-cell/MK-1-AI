@@ -55,6 +55,7 @@ let memoryProposals = [];
 let proposalSequence = 0;
 let editingKnowledgeId = null;
 let knowledgeMutationPending = false;
+let settingsMemoryReviewId = null;
 
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function loadState() {
@@ -70,6 +71,12 @@ function safe(value) {
 }
 function waitingCount() { return state.approvals.filter(item => item.status === '承認待ち').length; }
 function routeTo(route) { location.hash = `#/${route}`; }
+function reviewMemoryCandidateInSettings(id) {
+  const item = memoryProposals.find(value => value.id === id);
+  if (!item) { showToast('確認候補が見つかりません。もう一度ミライに内容を伝えてください。'); return; }
+  settingsMemoryReviewId = id;
+  routeTo('settings');
+}
 function showToast(message) { const el = document.querySelector('#toast'); el.textContent = message; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 2600); }
 function iconFor(agent) { return agents.find(a => a[1] === agent)?.[0] || '✦'; }
 function statusPill(status) { return `<span class="pill ${status === '承認待ち' ? 'waiting' : status === '完了' || status === '承認済み' ? 'done' : status === '却下' ? 'danger' : ''}">${safe(status)}</span>`; }
@@ -116,14 +123,14 @@ function memoryCandidateView(item) {
   const updating = item.kind === 'update';
   const review = !['create', 'update'].includes(item.kind);
   const heading = updating ? '長期記憶の更新候補があります' : review ? '長期記憶の確認が必要です' : '長期記憶への登録候補があります';
-  return `<section class="memory-candidate notice" aria-label="${heading}"><strong>${heading}</strong><p>まだ変更していません。対象の店舗・事業と内容を確認してください。外部操作の承認ではありません。</p><small>${safe(item.category)}</small><h3>${safe(item.title)}</h3>${updating ? `<p><strong>現在登録されている内容</strong></p><p>${safe(item.previousBody)}</p><p><strong>新しい内容</strong></p>` : ''}<p>${safe(item.body)}</p>${review ? `<p>設定画面で整理してください。</p>${(item.existing || []).map(existing => `<article class="knowledge-content"><h4>${safe(existing.title)}</h4><small>${safe(existing.category)}</small><p>${safe(existing.body)}</p></article>`).join('')}${item.existingCount > 10 ? '<p>候補が多いため最初の10件を表示しています。残りは設定画面で確認してください。</p>' : ''}` : ''}<p>${updating ? '更新理由' : '登録理由'}：${safe(item.reason || item.source)}</p><div class="knowledge-actions">${review ? '<button type="button" class="secondary" data-route="settings">設定で確認する</button>' : `<button type="button" class="primary" data-memory-accept="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>${updating ? '更新する' : '登録する'}</button>`}<button type="button" class="secondary" data-memory-dismiss="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>${updating ? '今回は更新しない' : '今回は登録しない'}</button></div></section>`;
+  return `<section class="memory-candidate notice" aria-label="${heading}"><strong>${heading}</strong><p>まだ変更していません。対象の店舗・事業と内容を確認してください。外部操作の承認ではありません。</p><small>${safe(item.category)}</small><h3>${safe(item.title)}</h3>${updating ? `<p><strong>現在登録されている内容</strong></p><p>${safe(item.previousBody)}</p><p><strong>新しい内容</strong></p>` : ''}<p>${safe(item.body)}</p>${review ? `<p>設定画面で整理してください。</p>${(item.existing || []).map(existing => `<article class="knowledge-content"><h4>${safe(existing.title)}</h4><small>${safe(existing.category)}</small><p>${safe(existing.body)}</p></article>`).join('')}${item.existingCount > 10 ? '<p>候補が多いため最初の10件を表示しています。残りは設定画面で確認してください。</p>' : ''}` : ''}<p>${updating ? '更新理由' : '登録理由'}：${safe(item.reason || item.source)}</p><div class="knowledge-actions">${review ? `<button type="button" class="secondary" data-memory-review="${safe(item.id)}">設定で確認する</button>` : `<button type="button" class="primary" data-memory-accept="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>${updating ? '更新する' : '登録する'}</button>`}<button type="button" class="secondary" data-memory-dismiss="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>${updating ? '今回は更新しない' : '今回は登録しない'}</button></div></section>`;
 }
 
 async function decideMemoryCandidate(id, accept) {
   const item = memoryProposals.find(item => item.id === id);
   if (!serverConversation || !item || item.pending) return;
   if (accept && !['create', 'update'].includes(item.kind)) return;
-  if (!accept) { memoryProposals = memoryProposals.filter(value => value !== item); render(); return; }
+  if (!accept) { memoryProposals = memoryProposals.filter(value => value !== item); if (settingsMemoryReviewId === id) settingsMemoryReviewId = null; render(); return; }
   item.pending = true;
   render();
   try {
@@ -154,7 +161,9 @@ function knowledgeItemView(item) {
 function knowledgeView(enabled = serverConversation) {
   if (!enabled) return '';
   const editing = knowledgeItems.find(item => item.id === editingKnowledgeId && item.active);
-  return `<div class="card" style="margin-top:20px"><div class="section-head"><h3>経営知識（長期記憶）</h3></div><p>登録を確認した情報だけを保存します。会話から自動登録しません。パスワード・APIキー・秘密情報は入力しないでください。</p>
+  const review = memoryProposals.find(item => item.id === settingsMemoryReviewId && !['create', 'update'].includes(item.kind));
+  const reviewPanel = review ? `<section class="notice" id="memory-review-panel" style="margin-bottom:20px"><strong>会話からの長期記憶候補を確認</strong><p>まだ登録・変更していません。候補と既存知識を比較して、必要な知識だけを編集してください。</p><small>${safe(review.category)}</small><h3>${safe(review.title)}</h3><p>${safe(review.body)}</p>${(review.existing || []).map(existing => `<article class="knowledge-content"><h4>${safe(existing.title)}</h4><small>${safe(existing.category)}</small><p>${safe(existing.body)}</p>${existing.id ? `<button type="button" class="secondary" data-review-edit="${safe(existing.id)}">この知識を編集</button>` : ''}</article>`).join('')}<div class="knowledge-actions"><button type="button" class="secondary" data-memory-dismiss="${safe(review.id)}">今回は登録しない</button></div></section>` : '';
+  return `<div class="card" style="margin-top:20px"><div class="section-head"><h3>経営知識（長期記憶）</h3></div>${reviewPanel}<p>登録を確認した情報だけを保存します。会話から自動登録しません。パスワード・APIキー・秘密情報は入力しないでください。</p>
     <form id="knowledge-form" data-knowledge-id="${safe(editing?.id || '')}" aria-labelledby="knowledge-form-heading"><h3 id="knowledge-form-heading">${editing ? `編集中：${safe(editing.title)}` : '新しい経営知識を登録'}</h3>${editing ? '<p role="status">下の内容を変更し、確認欄にチェックして「知識を更新」を押してください。保存するまで変更されません。</p>' : ''}<div class="form-grid"><div class="field"><label>カテゴリ</label><input name="category" list="knowledge-categories" maxlength="40" value="${safe(editing?.category || '')}" required><datalist id="knowledge-categories">${['会社基本情報','事業','店舗','商品','顧客','スタッフ','経営方針','承認ルール','不動産','財務','EC','広告','その他'].map(value=>`<option value="${value}">`).join('')}</datalist></div><div class="field"><label>タイトル</label><input name="title" maxlength="120" value="${safe(editing?.title || '')}" required></div></div><div class="field"><label>本文</label><textarea name="body" maxlength="3000" required>${safe(editing?.body || '')}</textarea></div><div class="field"><label>情報源・登録理由</label><input name="source" maxlength="500" value="${safe(editing?.source || '')}" required></div><div class="field"><label><input type="checkbox" name="confirmed" required> 内容を確認し、長期知識として${editing ? '更新' : '登録'}します</label></div><button class="primary" type="submit">${editing ? '知識を更新' : '知識を登録'}</button> ${editing ? '<button class="secondary" type="button" id="cancel-knowledge-edit">キャンセル</button>' : ''}</form>
     <div style="margin-top:20px"><h3>質問で参照される知識を確認</h3><p>AIへ送信せずに、現在の質問で選ばれる知識のタイトルだけを確認します。例：私が経営しているコーヒー店について教えてください</p><div class="field"><label for="knowledge-preview-question">質問</label><input id="knowledge-preview-question" maxlength="8000"></div><button class="secondary" type="button" id="knowledge-preview-button">参照する知識を確認</button><div id="knowledge-preview-result" aria-live="polite"></div></div>
     <div style="margin-top:20px"><h3>登録済みの知識</h3>${knowledgeItems.length ? knowledgeItems.map(knowledgeItemView).join('') : '<p>登録された経営知識はまだありません。</p>'}</div></div>`;
@@ -353,6 +362,10 @@ async function previewKnowledge(question) {
 function decideApproval(id, decision) { const a=state.approvals.find(x=>x.id===id); if(!a)return; a.status=decision; a.decidedAt=new Date().toISOString(); state.auditLog.unshift({ id:`log-${Date.now()}`, actor:state.settings.ownerName, action:decision, target:a.title, createdAt:a.decidedAt }); saveState(); showToast(`${a.title}を「${decision}」として記録しました。`); render(); }
 
 document.addEventListener('click', e => {
+  const memoryReview = e.target.closest('[data-memory-review]');
+  if (memoryReview) { e.preventDefault(); reviewMemoryCandidateInSettings(memoryReview.dataset.memoryReview); return; }
+  const reviewEdit = e.target.closest('[data-review-edit]');
+  if (reviewEdit) { e.preventDefault(); beginKnowledgeEdit(reviewEdit.dataset.reviewEdit); return; }
   const edit = e.target.closest('[data-knowledge-edit]');
   if (edit) { e.preventDefault(); beginKnowledgeEdit(edit.dataset.knowledgeEdit); return; }
   if (e.target.closest('#cancel-knowledge-edit')) { e.preventDefault(); cancelKnowledgeEdit(); return; }
