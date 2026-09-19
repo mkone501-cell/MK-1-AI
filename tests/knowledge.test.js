@@ -9,6 +9,7 @@ const { createServer } = require('../server/server');
 const { SessionStore } = require('../server/session-store');
 const { loadConfig } = require('../server/config');
 const { MiraiService } = require('../server/mirai-service');
+const { memoryCandidates } = require('../server/knowledge/candidates');
 
 const sample = { category:'不動産', title:'北品川ビル', body:'家賃は月220万円', source:'本人が契約書を確認' };
 
@@ -388,4 +389,24 @@ test('設定の編集クリック→フォーム→確認→同じID保存、キ
     click('[data-knowledge-edit]',{knowledgeEdit:second.id});
     assert.equal(vm.runInContext('editingKnowledgeId',context),null);
   });
+});
+
+test('Phase 5.6は再利用できる新しい経営決定だけを登録候補にする', () => {
+  const config = loadConfig({ NODE_ENV:'test' });
+  const cases = [
+    ['NORTH STAR BEANSの席数は35席に変更する', '店舗'],
+    ['NORTH STAR BEANSのECを強化する', 'EC'],
+    ['年間利益目標は3000万円を目標にする', '経営方針']
+  ];
+  for (const [message, category] of cases) {
+    const candidates = memoryCandidates(message, config);
+    assert.equal(candidates.length, 1, message);
+    assert.equal(candidates[0].category, category);
+  }
+  for (const message of [
+    'NORTH STAR BEANSのECを強化しますか？',
+    '来月はNORTH STAR BEANSのECを強化する',
+    'NORTH STAR BEANSのECを強化したい',
+    'NORTH STAR BEANSの席数は35席に変更しない'
+  ]) assert.deepEqual(memoryCandidates(message, config), [], message);
 });
