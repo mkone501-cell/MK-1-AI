@@ -9,7 +9,7 @@ const rules = [
   { category:'店舗', title:'店舗席数の決定', topic:/(?:席数|座席数)/, ending:/(?:に変更する|に変更します|にする|にします|で運営する|で運営します)$/ },
   { category:'EC', title:'EC方針の決定', topic:/(?:EC|通販|ネットショップ|オンラインショップ)/i, ending:/(?:を強化する|を強化します|に注力する|に注力します|を中心にする|を中心にします)$/ },
   { category:'経営方針', title:'利益目標の決定', topic:/利益目標/, ending:/(?:にする|にします|を目標にする|を目標にします|を目標とする|を目標とします)$/ },
-  { category:'商品', title:'価格の決定', topic:/価格/, ending:/(?:に変更する|に変更します|にする|にします)$/ },
+  { category:'商品', title:'価格の決定', topic:/価格/, ending:/(?:に変更する|に変更します|にする|にします)$/ },\n  { category:'商品', title:'新メニューの決定', topic:/(?:新しいメニュー|新メニュー|メニュー)/, ending:/(?:を販売することに決めました|を販売することに決めます|を提供することに決めました|を提供することに決めます)$/ },
   { category:'スタッフ', title:'スタッフ体制の決定', topic:/スタッフ体制/, ending:/(?:に変更する|に変更します|にする|にします)$/ },
   { category:'不動産', title:'物件情報の変更', topic:/(?:家賃|面積)/, ending:/(?:に変更する|に変更します|にする|にします)$/ },
   { category:'店舗', title:'営業時間の決定', topic:/営業時間/, ending:/(?:に変更する|に変更します|に決定する|に決定しました|にする|にします)$/ },
@@ -20,7 +20,7 @@ const rules = [
 function memoryCandidates(message, config, req) {
   if (typeof message !== 'string') return [];
   const body = message.trim();
-  if (!body || body.length > 500 || uncertain.test(body)) return [];
+  if (!body || body.length > 500) return [];\n  const decisionMadeToday = /(?:今日|本日)/.test(body) && explicitDecision.test(body.replace(/[。！!]$/, ''));\n  if (temporaryWords.test(body) || (uncertain.test(body) && !decisionMadeToday)) return [];
   // Multiple sentences can mix a decision with a question/quotation; leave them for manual registration.
   const statement = body.replace(/[。！!]$/, '');
   if (/[。！!;]/.test(statement)) return [];
