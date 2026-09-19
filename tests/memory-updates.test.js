@@ -282,8 +282,8 @@ test('本番再現：句点付き変更文は2件なら比較付きreview、1件
     assert.equal(f.rows.get(b.id).body,b.body);
     const html = await fetch(base + '/');
     assert.equal(html.headers.get('cache-control'),'no-cache');
-    assert.match(await html.text(),/app\.js\?v=phase54-review-2/);
-    const js = await fetch(base + '/app.js?v=phase54-review-2');
+    assert.match(await html.text(),/app\.js\?v=phase54-edit-1/);
+    const js = await fetch(base + '/app.js?v=phase54-edit-1');
     assert.equal(js.status,200);
     assert.equal(js.headers.get('cache-control'),'no-cache');
   } finally { await new Promise(resolve=>server.close(resolve)); }
