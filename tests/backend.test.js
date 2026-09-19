@@ -113,6 +113,35 @@ test('履歴や変更状況を尋ねる質問では会話文脈を維持する',
   assert.match(JSON.stringify(payload.input), /9:00〜14:00/);
 });
 
+test('未登録の個人・社内情報はOpenAIに推測させず短く返す', async () => {
+  let called = false;
+  const service = new MiraiService({
+    apiKey:'test-secret-key', model:'test-model',
+    fetchImpl:async () => { called = true; throw new Error('should not call provider'); }
+  });
+  const result = await service.reply({ message:'NORTH STAR BEANSの定休日は何曜日ですか？', history:[{ role:'user', content:'古い会話' }], knowledge:[] });
+  assert.equal(result.answer, 'その情報はまだ登録されていません。');
+  assert.equal(called, false);
+});
+
+test('分析相談では関連する複数知識と会話文脈をOpenAIへ渡す', async () => {
+  let payload;
+  const service = new MiraiService({
+    apiKey:'test-secret-key', model:'test-model',
+    fetchImpl:async (_url, options) => {
+      payload = JSON.parse(options.body);
+      return { ok:true, json:async () => ({ output_text:'営業時間と基本情報を踏まえた提案です。' }) };
+    }
+  });
+  const knowledge = [
+    { category:'店舗', title:'営業時間', body:'平日9:00〜15:00、土日祝8:00〜17:00', source:'本人確認' },
+    { category:'会社基本情報', title:'NORTH STAR BEANS', body:'専門コーヒー店を運営', source:'本人確認' }
+  ];
+  await service.reply({ message:'NORTH STAR BEANSの売上を伸ばす方法を分析して', history:[{ role:'user', content:'来店客を増やしたい' }], knowledge });
+  assert.match(payload.instructions, /複数の知識が必要な質問では/);
+  assert.match(JSON.stringify(payload.input), /営業時間|専門コーヒー店|来店客を増やしたい/);
+});
+
 test('OpenAIエラーは秘密を含めず安全な分類だけを保持する', async () => {
   const service = new MiraiService({
     apiKey: 'never-log-this-secret',
