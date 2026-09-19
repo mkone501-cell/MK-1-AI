@@ -6,7 +6,7 @@ const { canExecuteProtectedAction } = require('../server/approval-guard');
 const { AuthService } = require('../server/auth-service');
 const { SessionStore } = require('../server/session-store');
 const { hashPassword, verifyPassword } = require('../server/password');
-const { MiraiService, extractOutputText, classifyOpenAIError } = require('../server/mirai-service');
+const { MiraiService, extractOutputText, classifyOpenAIError, isSimpleKnowledgeQuestion } = require('../server/mirai-service');
 const { createServer } = require('../server/server');
 
 test('重要操作は承認が必要になる', () => {
@@ -70,6 +70,47 @@ test('単純な知識確認には短い直接回答を促し、定型フォー�
   assert.match(payload.instructions, /説明を求められた質問には必要な範囲で詳しく答えてください/);
   assert.match(JSON.stringify(payload.input), /777/);
   assert.equal(result.approval.required, false);
+});
+
+test('営業時間の単純確認では過去会話を送らず有効な知識だけで直接回答する', async () => {
+  let payload;
+  const service = new MiraiService({
+    apiKey: 'test-secret-key', model: 'test-model',
+    fetchImpl: async (_url, options) => {
+      payload = JSON.parse(options.body);
+      return { ok:true, json:async () => ({ output_text:'現在登録されている営業時間は、平日9:00〜15:00、土日祝8:00〜17:00です。' }) };
+    }
+  });
+  const knowledge = [{ category:'店舗', title:'営業時間の決定', body:'NORTH STAR BEANSの営業時間は、平日9:00〜15:00、土日祝8:00〜17:00です。', source:'本人確認' }];
+  const result = await service.reply({
+    message:'NORTH STAR BEANSの現在の営業時間を教えてください。',
+    history:[
+      { role:'user', content:'NORTH STAR BEANSの平日の営業時間を9:00〜14:00に変更します。' },
+      { role:'assistant', content:'更新候補として確認してください。' }
+    ],
+    knowledge
+  });
+  assert.equal(result.answer, '現在登録されている営業時間は、平日9:00〜15:00、土日祝8:00〜17:00です。');
+  assert.equal(isSimpleKnowledgeQuestion('NORTH STAR BEANSの現在の営業時間を教えてください。', knowledge), true);
+  assert.match(payload.instructions, /会話履歴、以前のユーザー発言、更新候補、過去の変更、無効な知識/);
+  assert.match(JSON.stringify(payload.input), /平日9:00〜15:00/);
+  assert.doesNotMatch(JSON.stringify(payload.input), /9:00〜14:00|更新候補/);
+});
+
+test('履歴や変更状況を尋ねる質問では会話文脈を維持する', async () => {
+  let payload;
+  const service = new MiraiService({
+    apiKey:'test-secret-key', model:'test-model',
+    fetchImpl:async (_url, options) => {
+      payload = JSON.parse(options.body);
+      return { ok:true, json:async () => ({ output_text:'変更履歴を確認します。' }) };
+    }
+  });
+  const history = [{ role:'user', content:'営業時間を9:00〜14:00に変更します。' }];
+  const knowledge = [{ category:'店舗', title:'営業時間の決定', body:'平日9:00〜15:00、土日祝8:00〜17:00', source:'本人確認' }];
+  await service.reply({ message:'営業時間の変更履歴を詳しく教えてください。', history, knowledge });
+  assert.equal(isSimpleKnowledgeQuestion('営業時間の変更履歴を詳しく教えてください。', knowledge), false);
+  assert.match(JSON.stringify(payload.input), /9:00〜14:00/);
 });
 
 test('OpenAIエラーは秘密を含めず安全な分類だけを保持する', async () => {
