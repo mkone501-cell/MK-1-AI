@@ -6,7 +6,7 @@ const { canExecuteProtectedAction } = require('../server/approval-guard');
 const { AuthService } = require('../server/auth-service');
 const { SessionStore } = require('../server/session-store');
 const { hashPassword, verifyPassword } = require('../server/password');
-const { MiraiService, extractOutputText, classifyOpenAIError, isSimpleKnowledgeQuestion } = require('../server/mirai-service');
+const { MiraiService, OPENAI_TIMEOUT_MS, extractOutputText, classifyOpenAIError, isSimpleKnowledgeQuestion } = require('../server/mirai-service');
 const { createServer } = require('../server/server');
 
 test('重要操作は承認が必要になる', () => {
@@ -140,6 +140,10 @@ test('分析相談では関連する複数知識と会話文脈をOpenAIへ渡�
   await service.reply({ message:'NORTH STAR BEANSの売上を伸ばす方法を分析して', history:[{ role:'user', content:'来店客を増やしたい' }], knowledge });
   assert.match(payload.instructions, /複数の知識が必要な質問では/);
   assert.match(JSON.stringify(payload.input), /営業時間|専門コーヒー店|来店客を増やしたい/);
+});
+
+test('分析回答は長めのOpenAI処理時間を許容する', () => {
+  assert.equal(OPENAI_TIMEOUT_MS, 60000);
 });
 
 test('OpenAIエラーは秘密を含めず安全な分類だけを保持する', async () => {
