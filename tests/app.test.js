@@ -104,6 +104,31 @@ test('設定で確認した候補は未承認のまま新規知識フォーム�
   assert.equal(vm.runInContext('memoryProposals.length', context), 1);
 });
 
+test('候補を設定で確認した後は、確認チェック付きの送信だけが一度だけ登録する', async () => {
+  const vm = require('node:vm'), fs = require('node:fs'), path = require('node:path');
+  const handlers = {}, calls = [];
+  const node = () => ({ innerHTML:'', textContent:'', classList:{ add(){}, remove(){}, toggle(){} } });
+  const context = vm.createContext({
+    module:{ exports:{} }, console, Date, JSON, structuredClone, setTimeout:() => 0,
+    localStorage:{ getItem:()=>null, setItem(){} }, location:{ hash:'#/settings' }, window:{ addEventListener(){} },
+    FormData:class { constructor(form) { this.values = form.values; } get(key) { return this.values[key] ?? null; } },
+    document:{ querySelector:()=>node(), querySelectorAll:()=>[], createElement:node, addEventListener:(name, handler)=>{ handlers[name] = handler; } },
+    fetch:async (route, options={}) => { calls.push({ route, options }); return { ok:true, json:async()=> options.method === 'POST' ? { knowledge:{ id:'saved' } } : { knowledge:[] } }; }
+  });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../app.js'), 'utf8'), context);
+  vm.runInContext(`serverConversation = true; memoryProposals = [{ id:'review-1', kind:'review', category:'商品', title:'新メニューの決定', body:'新メニューとして抹茶プリンを販売することに決めました', reason:'本人の今回の明確な決定' }]; settingsMemoryReviewId = 'review-1';`, context);
+  const form = confirmed => ({ id:'knowledge-form', dataset:{ knowledgeId:'' }, values:{ category:'商品', title:'新メニューの決定', body:'新メニューとして抹茶プリンを販売することに決めました', source:'本人の今回の明確な決定', ...(confirmed ? { confirmed:'on' } : {}) } });
+  await handlers.submit({ preventDefault(){}, target:form(false) });
+  assert.equal(calls.filter(call => call.options.method === 'POST').length, 0);
+  await handlers.submit({ preventDefault(){}, target:form(true) });
+  const writes = calls.filter(call => call.options.method === 'POST');
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].route, 'api/knowledge');
+  assert.deepEqual(JSON.parse(writes[0].options.body).confirmed, true);
+  assert.equal(vm.runInContext('memoryProposals.length', context), 0);
+  assert.equal(vm.runInContext('settingsMemoryReviewId', context), null);
+});
+
 test('登録済み知識はアイコン用の固定幅列を使わず本文と操作を配置する', () => {
   const item = { id:'test-id', category:'店舗', title:'NORTH STAR BEANSの店舗情報',
     body:'日本語の長い説明文。'.repeat(30), source:'本人確認', active:true };

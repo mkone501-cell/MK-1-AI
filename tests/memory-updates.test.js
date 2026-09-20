@@ -62,6 +62,16 @@ test('同じ対象の別項目・実績と目標・他対象・曖昧な複数�
   assert.equal(explicit[0].kind, 'update');
 });
 
+test('別の既存知識があっても、構造化できない新規の明確な決定は手動確認後に登録できる', async () => {
+  const message = '新メニューとして抹茶プリンを販売することに決めました';
+  const existing = entry('NORTH STAR BEANSの営業時間は平日9:00〜15:00、土日祝8:00〜17:00', { category:'店舗', title:'営業時間の決定' });
+  const [candidate] = await proposeMemory(message, repoOf([existing]), 'a', config);
+  assert.equal(candidate.kind, 'create');
+
+  const same = await proposeMemory(message, repoOf([{ ...candidate, id:randomUUID(), active:true, updatedAt:'2026-01-01T00:00:00.000Z' }]), 'a', config);
+  assert.equal(same[0].kind, 'duplicate');
+});
+
 test('秘密情報を含む旧知識や入力を候補・監査へコピーしない', async () => {
   const rows = [entry(original + '、パスワード=example-only')];
   const candidates = await proposeMemory(message, repoOf(rows), 'a', config);

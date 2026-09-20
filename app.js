@@ -315,6 +315,7 @@ function setKnowledgePending(pending) {
 async function saveKnowledge(form) {
   if (!serverConversation || knowledgeMutationPending) return;
   const id = form.dataset.knowledgeId || null;
+  const reviewedCandidateId = !id ? settingsMemoryReviewId : null;
   if (id !== editingKnowledgeId || (id && !knowledgeItems.some(item => item.id === id && item.active))) {
     throw new Error('編集対象を確認できません。もう一度編集ボタンから開いてください。');
   }
@@ -326,8 +327,15 @@ async function saveKnowledge(form) {
     const response = await fetch(id ? `api/knowledge/${id}` : 'api/knowledge', {
       method:id ? 'PUT' : 'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(value)
     });
-    if (!response.ok) throw new Error('保存できませんでした。入力内容とログイン状態を確認してください。');
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}));
+      throw new Error(result.error || '保存できませんでした。入力内容とログイン状態を確認してください。');
+    }
     editingKnowledgeId = null;
+    if (reviewedCandidateId) {
+      memoryProposals = memoryProposals.filter(item => item.id !== reviewedCandidateId);
+      if (settingsMemoryReviewId === reviewedCandidateId) settingsMemoryReviewId = null;
+    }
     await loadKnowledge();
     render();
     showToast(id ? '選択した経営知識を更新しました。' : '経営知識を保存しました。');
