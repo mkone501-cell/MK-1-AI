@@ -5,14 +5,12 @@ const { validateKnowledge } = require('./validation');
 // Conservative, deterministic extraction from the current user's statement only.
 // Never interpret provider output, history, or business knowledge as approval.
 const uncertain = /[?？\n\r「」『』“”"]|(?:どう|教えて|でしょう|ですか|ますか|するか|かな|かも|たぶん|多分|おそらく|思う|思います|検討|予定|希望|願望|仮に|もし|例えば|たとえば|提案|AI|ミライ|おすすめ|勧め|と言|とのこと|らしい|そうです|したい|しようか|今日|明日|今週|今月|来週|来月|本日|今回|一時|当面|期間限定|試し|取り消|取消|撤回|しない|しません|ではない|ではありません)/;
-const temporaryWords = /(?:明日|今週|今月|来週|来月|今回|一時|当面|期間限定|試し)/;
-const explicitDecision = /(?:ことに決めました|ことに決めます|に決定しました|に決定する)$/;
 const rules = [
   { category:'店舗', title:'店舗席数の決定', topic:/(?:席数|座席数)/, ending:/(?:に変更する|に変更します|にする|にします|で運営する|で運営します)$/ },
   { category:'EC', title:'EC方針の決定', topic:/(?:EC|通販|ネットショップ|オンラインショップ)/i, ending:/(?:を強化する|を強化します|に注力する|に注力します|を中心にする|を中心にします)$/ },
   { category:'経営方針', title:'利益目標の決定', topic:/利益目標/, ending:/(?:にする|にします|を目標にする|を目標にします|を目標とする|を目標とします)$/ },
   { category:'商品', title:'価格の決定', topic:/価格/, ending:/(?:に変更する|に変更します|にする|にします)$/ },
-  { category:'商品', title:'新メニューの決定', topic:/(?:新しいメニュー|新メニュー|メニュー)/, ending:/(?:を販売することに決めました|を販売することに決めます|を提供することに決めました|を提供することに決めます)$/ },
+  { category:'商品', title:'新メニューの決定', topic:/(?:新しいメニュー|新メニュー|メニュー)/, ending:/(?:を|として)(?:販売|提供)することに決め(?:ました|ます)$/ },
   { category:'スタッフ', title:'スタッフ体制の決定', topic:/スタッフ体制/, ending:/(?:に変更する|に変更します|にする|にします)$/ },
   { category:'不動産', title:'物件情報の変更', topic:/(?:家賃|面積)/, ending:/(?:に変更する|に変更します|にする|にします)$/ },
   { category:'店舗', title:'営業時間の決定', topic:/営業時間/, ending:/(?:に変更する|に変更します|に決定する|に決定しました|にする|にします)$/ },
@@ -24,8 +22,9 @@ function memoryCandidates(message, config, req) {
   if (typeof message !== 'string') return [];
   const body = message.trim();
   if (!body || body.length > 500) return [];
-  const explicitFinalDecision = explicitDecision.test(body.replace(/[。！!]$/, ''));
-  if (temporaryWords.test(body) || (uncertain.test(body) && !explicitFinalDecision)) return [];
+  // A decisive ending never overrides uncertainty, a wish, deliberation, or AI-originated wording.
+  // Candidate creation is intentionally fail-closed: use manual registration when in doubt.
+  if (uncertain.test(body)) return [];
   // Multiple sentences can mix a decision with a question/quotation; leave them for manual registration.
   const statement = body.replace(/[。！!]$/, '');
   if (/[。！!;]/.test(statement)) return [];
