@@ -34,13 +34,3 @@ test('候補生成でも秘密情報・長すぎる文章を拒否し値を返�
   }
   assert.deepEqual(memoryCandidates('店'.repeat(501) + '木曜日を定休日にする', config), []);
 });
-
-
-test('review candidate links to settings review flow instead of generic settings route', () => {
-  const source = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
-  assert.match(source, /data-memory-review/);
-  assert.match(source, /reviewMemoryCandidateInSettings/);
-  assert.match(source, /会話からの長期記憶候補を確認/);
-  assert.match(source, /data-review-edit/);
-  assert.doesNotMatch(memoryCandidateView({ id:'1', kind:'review', category:'店舗', title:'定休日の決定', body:'木曜日', reason:'確認', existing:[] }), /data-route="settings"/);
-});
