@@ -84,6 +84,26 @@ test('知識確認ボタンは登録フォームの必須チェックと送信�
   }
 });
 
+test('設定で確認した候補は未承認のまま新規知識フォームへ引き継ぐ', () => {
+  const vm = require('node:vm'), fs = require('node:fs'), path = require('node:path');
+  const calls = [];
+  const context = vm.createContext({
+    module:{ exports:{} }, console, Date, JSON, structuredClone, setTimeout:() => 0,
+    localStorage:{ getItem:()=>null, setItem(){} }, location:{ hash:'' },
+    document:{ querySelector:stub, createElement:stub, addEventListener(){} }, window:{ addEventListener(){} },
+    fetch:async (...args) => { calls.push(args); return { ok:true, json:async()=>({ knowledge:[] }) }; }
+  });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../app.js'), 'utf8'), context);
+  vm.runInContext(`serverConversation = true; memoryProposals = [{ id:'review-1', kind:'review', category:'商品', title:'新メニューの決定', body:'抹茶プリンを販売する', reason:'本人の今回の明確な決定' }]; reviewMemoryCandidateInSettings('review-1');`, context);
+  const html = vm.runInContext('knowledgeView()', context);
+  for (const value of ['value="商品"', 'value="新メニューの決定"', '抹茶プリンを販売する', 'value="本人の今回の明確な決定"']) assert.ok(html.includes(value));
+  assert.match(html, /<input type="checkbox" name="confirmed" required>/);
+  assert.doesNotMatch(html, /name="confirmed"[^>]*checked/);
+  assert.match(html, /今回は登録しない/);
+  assert.equal(calls.length, 0);
+  assert.equal(vm.runInContext('memoryProposals.length', context), 1);
+});
+
 test('登録済み知識はアイコン用の固定幅列を使わず本文と操作を配置する', () => {
   const item = { id:'test-id', category:'店舗', title:'NORTH STAR BEANSの店舗情報',
     body:'日本語の長い説明文。'.repeat(30), source:'本人確認', active:true };
