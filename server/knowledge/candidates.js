@@ -24,8 +24,8 @@ function memoryCandidates(message, config, req) {
   if (typeof message !== 'string') return [];
   const body = message.trim();
   if (!body || body.length > 500) return [];
-  const decisionMadeToday = /(?:今日|本日)/.test(body) && explicitDecision.test(body.replace(/[。！!]$/, ''));
-  if (temporaryWords.test(body) || (uncertain.test(body) && !decisionMadeToday)) return [];
+  const explicitFinalDecision = explicitDecision.test(body.replace(/[。！!]$/, ''));
+  if (temporaryWords.test(body) || (uncertain.test(body) && !explicitFinalDecision)) return [];
   // Multiple sentences can mix a decision with a question/quotation; leave them for manual registration.
   const statement = body.replace(/[。！!]$/, '');
   if (/[。！!;]/.test(statement)) return [];
