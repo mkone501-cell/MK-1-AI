@@ -62,7 +62,16 @@ async function proposeMemory(message, repository, ownerId, config, req) {
   });
   if (safeRows.length !== rows.length) return review();
   const incoming = facts(message);
-  if (incoming.length !== 1) return rows.length ? review(safeRows.filter(row => normalize(row.category) === normalize(candidate.category))) : initial;
+  if (incoming.length !== 1) {
+    // A shared category is not enough to prove that a new, explicit decision updates
+    // an existing record. Categories intentionally contain multiple independent facts.
+    const identical = safeRows.filter(row =>
+      normalize(row.category) === normalize(candidate.category) &&
+      normalize(row.title) === normalize(candidate.title) &&
+      normalize(row.body) === normalize(candidate.body));
+    if (identical.length) return [{ ...candidate, kind:'duplicate', reason:'同じ内容がすでに登録されています。登録は不要です。' }];
+    return initial;
+  }
   const fact = incoming[0];
   const possible = safeRows.filter(row => normalize(row.category) === normalize(candidate.category)).flatMap(row => facts(row.body).filter(f => f.key === fact.key && f.scope === fact.scope && (!['monthly', 'annual'].includes(f.key) || /目標/.test(row.title + row.body))).map(f => ({ row, fact:f })));
   const target = normalize(fact.target);
