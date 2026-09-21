@@ -6,7 +6,7 @@ const { validateKnowledge } = require('./validation');
 // Each descriptor defines a fact, not a whole document. Extend here for new fields.
 const descriptors = [
   { key:'hours', label:'営業時間', re:/(平日|土日祝日|土日祝|土日|祝日)?(?:の)?営業時間(?:は|を|：|:)?\s*(平日|土日祝日|土日祝|土日|祝日)?\s*(\d{1,2}:\d{2}[〜～~\-]\d{1,2}:\d{2})/g },
-  { key:'day', label:'定休日', re:/定休日(?:は|を|：|:)\s*([月火水木金土日]曜日)/g },
+  { key:'day', label:'定休日', re:/定休日(?:は|を|：|:)\s*(?:毎週)?\s*([月火水木金土日]曜日)/g },
   { key:'monthly', label:'月商', re:/月商(?:目標)?(?:は|を|：|:)?\s*(\d+(?:\.\d+)?万?円)/g },
   { key:'annual', label:'年商', re:/年商(?:目標)?(?:は|を|：|:)?\s*(\d+(?:\.\d+)?万?円)/g },
   { key:'sales', label:'売上目標', re:/売上目標(?:は|を|：|:)?\s*(\d+(?:\.\d+)?万?円)/g },
