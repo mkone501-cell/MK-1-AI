@@ -21,6 +21,7 @@ const { proposeMemory } = require('./knowledge/update-candidates');
 const { detectManagementDataCandidate } = require('./management-data/candidates');
 const { PostgresManagementDataRepository } = require('./management-data/postgres-management-data-repository');
 const { migrateManagementData } = require('./management-data/migrate-management-data');
+const { detectManagementDataQuery, managementDataContext } = require('./management-data/query');
 
 const ROOT = path.resolve(__dirname, '..');
 const MAX_BODY_BYTES = 32 * 1024;
@@ -361,6 +362,19 @@ function createApplication(options = {}) {
             catch { logger.error('knowledge.candidate_failed'); return respondJson(req, res, 503, { error:'既存の経営知識を確認できませんでした。時間をおいてお試しください。' }); }
           }
           const managementDataCandidate = detectManagementDataCandidate(message);
+          if (managementData) {
+            const managementQuery = detectManagementDataQuery(message);
+            if (managementQuery) {
+              try {
+                const entry = await managementData.findExact(auth.ownerEmail, managementQuery);
+                const context = managementDataContext(entry);
+                if (context) selectedKnowledge = [...selectedKnowledge, context];
+              } catch {
+                logger.error('management_data.search_failed');
+                return respondJson(req, res, 503, { error:'経営数値を確認できませんでした。時間をおいてお試しください。' });
+              }
+            }
+          }
           const result = await mirai.reply({ message, history, knowledge:selectedKnowledge });
           if (typeof result.answer !== 'string' || containsSecret(result.answer, config, req)) {
             logger.error('conversation.answer_rejected');
