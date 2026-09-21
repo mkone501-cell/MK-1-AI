@@ -10,6 +10,7 @@ const { SessionStore } = require('../server/session-store');
 const { loadConfig } = require('../server/config');
 const { MiraiService } = require('../server/mirai-service');
 const { memoryCandidates } = require('../server/knowledge/candidates');
+const { proposeMemory } = require('../server/knowledge/update-candidates');
 
 const sample = { category:'不動産', title:'北品川ビル', body:'家賃は月220万円', source:'本人が契約書を確認' };
 
@@ -409,4 +410,31 @@ test('Phase 5.6は再利用できる新しい経営決定だけを登録候補�
     'NORTH STAR BEANSのECを強化したい',
     'NORTH STAR BEANSの席数は35席に変更しない'
   ]) assert.deepEqual(memoryCandidates(message, config), [], message);
+});
+
+
+test('新メニューを以前の値に戻す決定も自動保存せず更新候補にする', async () => {
+  const config = loadConfig({ NODE_ENV:'test' });
+  const message = '新メニューは抹茶プリンに戻すことに決めました。';
+  const candidates = memoryCandidates(message, config);
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].category, '商品');
+  assert.equal(candidates[0].title, '新メニューの決定');
+
+  const existing = {
+    id:'knowledge-menu-1', category:'商品', title:'新メニューの決定',
+    body:'ほうじ茶プリンを新メニューとして販売することに決めました',
+    source:'本人確認', active:true, updatedAt:'2026-09-21T00:00:00.000Z'
+  };
+  const repository = { candidateRecords:async ownerId => {
+    assert.equal(ownerId, 'owner-a');
+    return [existing];
+  } };
+  const proposed = await proposeMemory(message, repository, 'owner-a', config);
+  assert.equal(proposed.length, 1);
+  assert.equal(proposed[0].kind, 'update');
+  assert.equal(proposed[0].knowledgeId, existing.id);
+  assert.match(proposed[0].body, /抹茶プリン/);
+  assert.doesNotMatch(proposed[0].body, /ほうじ茶プリン/);
+  assert.equal(existing.body, 'ほうじ茶プリンを新メニューとして販売することに決めました');
 });
