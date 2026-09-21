@@ -298,3 +298,31 @@ test('本番再現：句点付き変更文は2件なら比較付きreview、1件
     assert.equal(js.headers.get('cache-control'),'no-cache');
   } finally { await new Promise(resolve=>server.close(resolve)); }
 });
+
+
+test('新メニュー変更は既存の決定を自動更新せず、本人確認用の更新候補にする', async () => {
+  const old = entry('抹茶プリンを新メニューとして販売することに決めました', {
+    category:'商品', title:'新メニューの決定'
+  });
+  const text = '抹茶プリンの販売をやめて、新メニューはほうじ茶プリンに変更することに決めました。';
+  const [candidate] = await proposeMemory(text, repoOf([old]), 'a', config);
+  assert.equal(candidate.kind, 'update');
+  assert.equal(candidate.knowledgeId, old.id);
+  assert.equal(candidate.previousBody, old.body);
+  assert.equal(candidate.body, 'ほうじ茶プリンを新メニューとして販売することに決めました');
+  assert.equal(old.body, '抹茶プリンを新メニューとして販売することに決めました');
+  assert.match(candidate.reason, /新メニューの値が変わります/);
+});
+
+test('新メニュー変更の候補は曖昧な複数知識を勝手に上書きしない', async () => {
+  const text = '抹茶プリンの販売をやめて、新メニューはほうじ茶プリンに変更することに決めました。';
+  const rows = [
+    entry('抹茶プリンを新メニューとして販売することに決めました', { category:'商品', title:'新メニューの決定' }),
+    entry('コーヒープリンを新メニューとして販売することに決めました', { category:'商品', title:'新メニューの決定' })
+  ];
+  const [candidate] = await proposeMemory(text, repoOf(rows), 'a', config);
+  assert.equal(candidate.kind, 'review');
+  assert.equal(candidate.existingCount, 2);
+  assert.equal(rows[0].body, '抹茶プリンを新メニューとして販売することに決めました');
+  assert.equal(rows[1].body, 'コーヒープリンを新メニューとして販売することに決めました');
+});

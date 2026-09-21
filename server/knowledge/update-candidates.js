@@ -20,6 +20,20 @@ const normalizeScope = scope => scope === '土日祝日' ? '土日祝' : scope;
 
 function facts(text) {
   const found = [];
+  // New-menu decisions use natural language rather than a fixed "field: value" form.
+  // Extract only the menu name so an explicit replacement can update the existing
+  // confirmed decision while preserving the rest of the stored sentence.
+  for (const m of text.matchAll(/新メニュー(?:は|を)\s*([^、。]+?)\s*に変更することに決め(?:ました|ます)/g)) {
+    found.push({ key:'new_menu', scope:'', value:m[1].trim(), start:m.index + m[0].indexOf(m[1]), length:m[1].trim().length,
+      target:'', label:'新メニュー' });
+  }
+  for (const m of text.matchAll(/([^、。]+?)を新メニューとして(?:販売|提供)することに決め(?:ました|ます)/g)) {
+    const value = m[1].trim();
+    const start = m.index + m[0].indexOf(m[1]) + (m[1].length - m[1].trimStart().length);
+    if (!found.some(f => f.key === 'new_menu' && f.start === start)) {
+      found.push({ key:'new_menu', scope:'', value, start, length:value.length, target:'', label:'新メニュー' });
+    }
+  }
   for (const d of descriptors) {
     const re = new RegExp(d.re.source, 'g');
     for (const match of text.matchAll(re)) {
