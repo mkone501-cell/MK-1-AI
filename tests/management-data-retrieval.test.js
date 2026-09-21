@@ -37,5 +37,15 @@ test('Phase 6.7 exact lookup is owner, business, date and metric scoped', async 
   });
   assert.equal(row.amount, '150000');
   assert.deepEqual(seen.params, ['owner@example.com', 'north-star-beans', '2026-09-21', 'revenue']);
+  assert.match(seen.sql, /data_date = \$3::date/);
   assert.match(seen.sql, /confirmed_by_owner = TRUE/);
+});
+
+
+test('Phase 6.7 formats PostgreSQL Date values without dropping confirmed data', () => {
+  const context = managementDataContext({
+    business_key:'north-star-beans', data_date:new Date('2026-09-21T00:00:00.000Z'),
+    metric_type:'revenue', amount:'150000', currency:'JPY'
+  });
+  assert.equal(context.body, '9月21日のNORTH STAR BEANSの売上は150,000円です。');
 });
