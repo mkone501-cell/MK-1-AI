@@ -34,3 +34,13 @@ test('候補生成でも秘密情報・長すぎる文章を拒否し値を返�
   }
   assert.deepEqual(memoryCandidates('店'.repeat(501) + '木曜日を定休日にする', config), []);
 });
+
+
+test('定休日を毎週○曜日に決めましたという明確な決定を候補にする', () => {
+  const body = 'NORTH STAR BEANSの定休日は毎週木曜日に決めました。';
+  const candidates = memoryCandidates(body, config);
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].category, '店舗');
+  assert.equal(candidates[0].title, '定休日の決定');
+  assert.equal(candidates[0].body, body);
+});
