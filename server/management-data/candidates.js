@@ -40,9 +40,11 @@ function detectManagementDataCandidate(message) {
   const dataDate = dateMatch
     ? `${dateMatch[1]}-${String(dateMatch[2]).padStart(2,'0')}-${String(dateMatch[3]).padStart(2,'0')}`
     : null;
+  const businessKey = /NORTH\s+STAR\s+BEANS/i.test(text) ? 'north-star-beans' : null;
 
   return {
     kind:'management-data',
+    businessKey,
     metricType,
     amount,
     currency:'JPY',
