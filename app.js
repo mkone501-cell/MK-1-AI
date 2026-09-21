@@ -130,7 +130,42 @@ function memoryCandidateView(item) {
 function managementDataCandidateView(item) {
   const labels = { revenue:'売上', expense:'経費', profit:'利益', cash_balance:'現金残高' };
   const date = item.dataDate ? item.dataDate.replace(/-/g, '/') : '日付未指定';
-  return `<section class="memory-candidate notice" aria-label="経営数値の保存候補"><strong>経営数値の保存候補があります</strong><p>まだ保存していません。内容を確認してください。</p><small>${safe(labels[item.metricType] || item.metricType)} ・ ${safe(date)}</small><h3>${Number(item.amount).toLocaleString('ja-JP')}円</h3><p>${safe(item.originalText)}</p><p>本人確認後に保存するための候補です。この段階では自動保存されません。</p></section>`;
+  const canSave = Boolean(item.businessKey && item.dataDate);
+  return `<section class="memory-candidate notice" aria-label="経営数値の保存候補"><strong>経営数値の保存候補があります</strong><p>まだ保存していません。内容を確認してください。</p><small>${safe(labels[item.metricType] || item.metricType)} ・ ${safe(date)}</small><h3>${Number(item.amount).toLocaleString('ja-JP')}円</h3><p>${safe(item.originalText)}</p><p>${canSave ? '内容を確認して「確認して保存」を押した場合だけ保存します。' : '事業名と日付を安全に特定できないため、この候補は保存できません。事業名と日付を含めてもう一度入力してください。'}</p><div class="knowledge-actions">${canSave ? `<button type="button" class="primary" data-management-accept="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>確認して保存</button>` : ''}<button type="button" class="secondary" data-management-dismiss="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>今回は保存しない</button></div></section>`;
+}
+
+async function decideManagementDataCandidate(id, accept) {
+  const item = managementDataProposals.find(item => item.id === id);
+  if (!serverConversation || !item || item.pending) return;
+  if (!accept) {
+    managementDataProposals = managementDataProposals.filter(candidate => candidate.id !== id);
+    render();
+    showToast('今回は経営数値を保存しません。');
+    return;
+  }
+  item.pending = true; render();
+  try {
+    const response = await fetch('api/management-data/confirm', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body:JSON.stringify({
+        confirmed:true,
+        originalText:item.originalText,
+        businessKey:item.businessKey,
+        dataDate:item.dataDate,
+        metricType:item.metricType,
+        amount:item.amount,
+        currency:item.currency
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || '保存できませんでした。');
+    managementDataProposals = managementDataProposals.filter(candidate => candidate.id !== id);
+    render();
+    showToast('確認した経営数値を保存しました。');
+  } catch (error) {
+    item.pending = false; render(); showToast(error.message);
+  }
 }
 
 async function decideMemoryCandidate(id, accept) {
@@ -397,6 +432,11 @@ document.addEventListener('click', e => {
   if (e.target.closest('#cancel-knowledge-edit')) { e.preventDefault(); cancelKnowledgeEdit(); return; }
   const disable = e.target.closest('[data-knowledge-disable]');
   if (disable) { e.preventDefault(); return disableKnowledge(disable.dataset.knowledgeDisable); }
+
+  const acceptManagement = e.target.closest('[data-management-accept]');
+  if (acceptManagement) { e.preventDefault(); decideManagementDataCandidate(acceptManagement.dataset.managementAccept, true); return; }
+  const dismissManagement = e.target.closest('[data-management-dismiss]');
+  if (dismissManagement) { e.preventDefault(); decideManagementDataCandidate(dismissManagement.dataset.managementDismiss, false); return; }
 
   const acceptMemory = e.target.closest('[data-memory-accept]');
   if (acceptMemory) decideMemoryCandidate(acceptMemory.dataset.memoryAccept, true);
