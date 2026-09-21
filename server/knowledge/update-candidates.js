@@ -23,7 +23,7 @@ function facts(text) {
   // New-menu decisions use natural language rather than a fixed "field: value" form.
   // Extract only the menu name so an explicit replacement can update the existing
   // confirmed decision while preserving the rest of the stored sentence.
-  for (const m of text.matchAll(/新メニュー(?:は|を)\s*([^、。]+?)\s*に変更することに決め(?:ました|ます)/g)) {
+  for (const m of text.matchAll(/新メニュー(?:は|を)\s*([^、。]+?)\s*に(?:変更する|戻す)ことに決め(?:ました|ます)/g)) {
     found.push({ key:'new_menu', scope:'', value:m[1].trim(), start:m.index + m[0].indexOf(m[1]), length:m[1].trim().length,
       target:'', label:'新メニュー' });
   }
