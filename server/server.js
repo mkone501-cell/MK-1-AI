@@ -392,7 +392,7 @@ async function start(options = {}) {
     await migrateSessions(app.sessions.repository);
     await migrateConversations(app.conversations);
     await migrateKnowledge(app.knowledge);
-    await migrateManagementData(app.sessions.repository.pool);
+    await migrateManagementData(app.managementData);
     await app.sessions.repository.check();
   }
   const server = createServer({ ...options, config: app.config, auth: app.auth, sessions: app.sessions, conversations: app.conversations, knowledge: app.knowledge, managementData: app.managementData, mirai: app.mirai });
