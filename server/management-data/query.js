@@ -27,7 +27,10 @@ function detectManagementDataQuery(message) {
 
 function managementDataContext(entry) {
   if (!entry) return null;
-  const [year, month, day] = String(entry.data_date).slice(0, 10).split('-');
+  const rawDate = entry.data_date instanceof Date
+    ? entry.data_date.toISOString().slice(0, 10)
+    : String(entry.data_date || '').slice(0, 10);
+  const [year, month, day] = rawDate.split('-');
   const amount = Number(entry.amount);
   if (!year || !month || !day || !Number.isFinite(amount)) return null;
   const businessName = entry.business_key === 'north-star-beans' ? 'NORTH STAR BEANS' : entry.business_key;
