@@ -18,6 +18,9 @@ const { migrateKnowledge } = require('./knowledge/migrate-knowledge');
 const { validateKnowledge } = require('./knowledge/validation');
 const { knowledgeContext } = require('./knowledge/context');
 const { proposeMemory } = require('./knowledge/update-candidates');
+const { detectManagementDataCandidate } = require('./management-data/candidates');
+const { PostgresManagementDataRepository } = require('./management-data/postgres-management-data-repository');
+const { migrateManagementData } = require('./management-data/migrate-management-data');
 
 const ROOT = path.resolve(__dirname, '..');
 const MAX_BODY_BYTES = 32 * 1024;
@@ -77,6 +80,7 @@ function createApplication(options = {}) {
   const sessions = options.sessions || createSessionStore(config, { sessionRepository: options.sessionRepository });
   const conversations = options.conversations || (config.session.driver === 'database' && sessions.repository?.pool ? new PostgresConversationRepository(sessions.repository.pool) : null);
   const knowledge = options.knowledge || (config.session.driver === 'database' && sessions.repository?.pool ? new PostgresKnowledgeRepository(sessions.repository.pool) : null);
+  const managementData = options.managementData || (config.session.driver === 'database' && sessions.repository?.pool ? new PostgresManagementDataRepository(sessions.repository.pool) : null);
   const mirai = options.mirai || new MiraiService({
     // 認証未設定のサーバーから有料APIを利用しない安全弁です。
     apiKey: auth.configured ? config.openai.apiKey : '',
@@ -324,6 +328,7 @@ function createApplication(options = {}) {
             try { proposals = await proposeMemory(message, knowledge, session.user.id, config, req); }
             catch { logger.error('knowledge.candidate_failed'); return respondJson(req, res, 503, { error:'既存の経営知識を確認できませんでした。時間をおいてお試しください。' }); }
           }
+          const managementDataCandidate = detectManagementDataCandidate(message);
           const result = await mirai.reply({ message, history, knowledge:selectedKnowledge });
           if (typeof result.answer !== 'string' || containsSecret(result.answer, config, req)) {
             logger.error('conversation.answer_rejected');
@@ -332,7 +337,8 @@ function createApplication(options = {}) {
           try {
             const conversationId = await conversations.appendExchange({ ownerId:session.user.id, conversationId:id, message, answer:result.answer });
             return respondJson(req, res, 200, { ...result, conversationId,
-              memoryCandidates:proposals });
+              memoryCandidates:proposals,
+              managementDataCandidates:managementDataCandidate ? [managementDataCandidate] : [] });
           } catch {
             logger.error('conversation.save_failed');
             return respondJson(req, res, 503, { error:'会話を保存できませんでした。時間をおいてお試しください。' });
@@ -365,7 +371,7 @@ function createApplication(options = {}) {
     respondJson(req, res, 404, { error: '見つかりません。' });
   }
 
-  return { handler, auth, sessions, conversations, knowledge, mirai, config };
+  return { handler, auth, sessions, conversations, knowledge, managementData, mirai, config };
 }
 
 function createServer(options = {}) {
@@ -386,9 +392,10 @@ async function start(options = {}) {
     await migrateSessions(app.sessions.repository);
     await migrateConversations(app.conversations);
     await migrateKnowledge(app.knowledge);
+    await migrateManagementData(app.managementData);
     await app.sessions.repository.check();
   }
-  const server = createServer({ ...options, config: app.config, auth: app.auth, sessions: app.sessions, conversations: app.conversations, knowledge: app.knowledge, mirai: app.mirai });
+  const server = createServer({ ...options, config: app.config, auth: app.auth, sessions: app.sessions, conversations: app.conversations, knowledge: app.knowledge, managementData: app.managementData, mirai: app.mirai });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(app.config.port, '0.0.0.0', resolve); });
   console.log(`MK-1 AI経営本部: ポート ${server.address().port} で起動しました。`);
   return server;

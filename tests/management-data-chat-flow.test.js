@@ -1,0 +1,16 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+test('Phase 6.5 wires management-data candidate detection into authenticated chat without auto-save', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /detectManagementDataCandidate\(message\)/);
+  assert.match(source, /managementDataCandidates:managementDataCandidate \? \[managementDataCandidate\] : \[\]/);
+  assert.doesNotMatch(source, /managementData\.create\(/);
+});
+
+test('Phase 6.5 runs the management-data migration through its repository at startup', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /migrateManagementData\(app\.managementData\)/);
+});
