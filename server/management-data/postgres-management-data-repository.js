@@ -45,6 +45,24 @@ class PostgresManagementDataRepository {
     );
     return result.rows[0] || null;
   }
+  async findExact(ownerEmail, query) {
+    if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
+    if (!query?.businessKey || !query?.dataDate || !query?.metricType) return null;
+    const result = await this.pool.query(
+      `SELECT id, owner_email, business_key, data_date, metric_type, amount, currency, note, source,
+              confirmed_by_owner, created_at, updated_at
+         FROM management_data
+        WHERE owner_email = $1
+          AND business_key = $2
+          AND data_date = $3
+          AND metric_type = $4
+          AND confirmed_by_owner = TRUE
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT 1`,
+      [ownerEmail.trim(), query.businessKey, query.dataDate, query.metricType]
+    );
+    return result.rows[0] || null;
+  }
 }
 
 module.exports = { PostgresManagementDataRepository, normalizeEntry };
