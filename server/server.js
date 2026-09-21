@@ -297,6 +297,38 @@ function createApplication(options = {}) {
       } catch { logger.error('knowledge.request_failed'); return respondJson(req, res, 503, { error:'経営知識を処理できませんでした。時間をおいてお試しください。' }); }
     }
 
+    if (req.method === 'POST' && url.pathname === '/api/management-data/confirm') {
+      if (!requestOriginAllowed(req, config)) return respondJson(req, res, 403, { error:'この画面からご利用ください。' });
+      const session = await requireOwner(req, res, { csrf:true });
+      if (!session) return;
+      if (!managementData) return respondJson(req, res, 503, { error:'経営数値の保存機能が利用できません。' });
+      if (isRateLimited(req, 'management-data', 10)) return respondJson(req, res, 429, { error:'操作が多すぎます。時間をおいてお試しください。' });
+      try {
+        const body = await readJson(req);
+        if (body.confirmed !== true || typeof body.originalText !== 'string') {
+          return respondJson(req, res, 400, { error:'保存には本人の明示的な確認が必要です。' });
+        }
+        const candidate = detectManagementDataCandidate(body.originalText);
+        if (!candidate || !candidate.businessKey || !candidate.dataDate ||
+            candidate.metricType !== body.metricType || candidate.amount !== Number(body.amount) ||
+            candidate.currency !== body.currency || candidate.businessKey !== body.businessKey ||
+            candidate.dataDate !== body.dataDate) {
+          return respondJson(req, res, 409, { error:'事業・日付・数値を安全に確認できません。もう一度会話から入力してください。' });
+        }
+        const saved = await managementData.create(auth.ownerEmail, {
+          ...candidate,
+          confirmed:true,
+          source:'owner confirmed conversation',
+          note:candidate.originalText
+        });
+        if (!saved) return respondJson(req, res, 400, { error:'経営数値を保存できませんでした。内容を確認してください。' });
+        return respondJson(req, res, 201, { managementData:saved });
+      } catch {
+        logger.error('management_data.confirm_failed');
+        return respondJson(req, res, 503, { error:'経営数値を保存できませんでした。時間をおいてお試しください。' });
+      }
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/chat') {
       if (!requestOriginAllowed(req, config)) return respondJson(req, res, 403, { error: 'この画面からミライをご利用ください。' });
       const session = await requireOwner(req, res, { csrf: auth.configured, allowSetupMode: !config.production });
