@@ -54,7 +54,7 @@ class PostgresManagementDataRepository {
          FROM management_data
         WHERE owner_email = $1
           AND business_key = $2
-          AND data_date = $3
+          AND data_date = $3::date
           AND metric_type = $4
           AND confirmed_by_owner = TRUE
         ORDER BY updated_at DESC, created_at DESC
