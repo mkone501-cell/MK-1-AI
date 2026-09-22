@@ -41,3 +41,17 @@ test('Phase 6.3 validates management data before storage', () => {
   assert.equal(normalizeEntry({ confirmed:true, businessKey:'x', dataDate:'2026-09-21', metricType:'unknown', amount:1, source:'owner' }), null);
   assert.equal(normalizeEntry({ confirmed:true, businessKey:'x', dataDate:'2026-09-21', metricType:'revenue', amount:'not-a-number', source:'owner' }), null);
 });
+
+test('Phase 6.8 stores confirmed customer counts with COUNT unit', async () => {
+  const calls = [];
+  const repository = new PostgresManagementDataRepository({
+    query: async (sql, values) => { calls.push({ sql, values }); return { rows:[{ id:'2', confirmed_by_owner:true }] }; }
+  });
+  const saved = await repository.create('owner@example.com', {
+    businessKey:'north-star-beans', dataDate:'2026-09-22', metricType:'customers',
+    amount:80, currency:'COUNT', source:'owner confirmed conversation', confirmed:true
+  });
+  assert.equal(saved.confirmed_by_owner, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].values[5], 'COUNT');
+});
