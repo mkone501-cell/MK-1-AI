@@ -16,7 +16,7 @@ function normalizeEntry(input) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dataDate)) return null;
   if (!METRIC_TYPES.has(metricType)) return null;
   if (!Number.isFinite(amount)) return null;
-  if (!/^[A-Z]{3}$/.test(currency)) return null;
+  if (!/^[A-Z]{3,8}$/.test(currency)) return null;
   if (!source || source.length > 500) return null;
   if (note.length > 2000) return null;
 

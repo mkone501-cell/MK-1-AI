@@ -9,4 +9,5 @@ test('Phase 6.2 runs management data migration through the existing database poo
   assert.equal(queries.length, 1);
   assert.match(queries[0], /CREATE TABLE IF NOT EXISTS management_data/i);
   assert.match(queries[0], /confirmed_by_owner BOOLEAN NOT NULL DEFAULT FALSE/i);
+  assert.match(queries[0], /ALTER COLUMN currency TYPE VARCHAR\(8\)/i);
 });

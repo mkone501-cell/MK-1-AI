@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS management_data (
   data_date DATE NOT NULL,
   metric_type TEXT NOT NULL CHECK (metric_type IN ('revenue','expense','profit','cash_balance','customers','average_spend','other')),
   amount NUMERIC(18,2) NOT NULL,
-  currency CHAR(3) NOT NULL DEFAULT 'JPY',
+  currency VARCHAR(8) NOT NULL DEFAULT 'JPY',
   note TEXT,
   source TEXT NOT NULL,
   confirmed_by_owner BOOLEAN NOT NULL DEFAULT FALSE,
@@ -36,3 +36,8 @@ BEGIN
     ADD CONSTRAINT management_data_metric_type_check
     CHECK (metric_type IN ('revenue','expense','profit','cash_balance','customers','average_spend','other'));
 END $$;
+
+-- Customer counts use COUNT instead of a three-letter currency code.
+-- Widen existing installations safely; JPY and other existing values are preserved.
+ALTER TABLE management_data
+  ALTER COLUMN currency TYPE VARCHAR(8) USING BTRIM(currency);
