@@ -1,6 +1,6 @@
 'use strict';
 
-const METRIC_TYPES = new Set(['revenue', 'expense', 'profit', 'cash_balance', 'other']);
+const METRIC_TYPES = new Set(['revenue', 'expense', 'profit', 'cash_balance', 'customers', 'average_spend', 'other']);
 
 function normalizeEntry(input) {
   if (!input || typeof input !== 'object' || input.confirmed !== true) return null;
