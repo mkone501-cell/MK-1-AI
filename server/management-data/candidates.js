@@ -75,7 +75,21 @@ function detectManagementDataCandidates(message) {
 
   for (const metric of METRIC_PATTERNS) {
     const label = metric.labels
-      .filter(item => text.toLowerCase().includes(item.toLowerCase()))
+      .filter(item => {
+        const lowerText = text.toLowerCase();
+        const lowerLabel = item.toLowerCase();
+        let from = 0;
+        while (true) {
+          const index = lowerText.indexOf(lowerLabel, from);
+          if (index < 0) return false;
+          const tail = text.slice(index + item.length, index + item.length + 32);
+          const hasValue = metric.metricType === 'customers'
+            ? /^[^\d-]{0,12}-?\d[\d,]*(?:\.\d+)?\s*人/.test(tail)
+            : /^[^\d¥￥-]{0,12}(?:¥|￥)?\s*-?\d[\d,]*(?:\.\d+)?\s*(?:億円|万円|千円|円)/.test(tail);
+          if (hasValue) return true;
+          from = index + lowerLabel.length;
+        }
+      })
       .sort((a,b) => b.length - a.length)[0];
     if (!label) continue;
     const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

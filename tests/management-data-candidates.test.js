@@ -61,3 +61,13 @@ test('Phase 6.10 extracts multiple daily metrics from one explicit owner report 
 test('Phase 6.10 still rejects a bundled forecast instead of creating save candidates', () => {
   assert.deepEqual(detectManagementDataCandidates('2026年9月23日のNORTH STAR BEANSの売上見込みは20万円、来客数は90人です。'), []);
 });
+
+
+test('Phase 6.10 keeps bundled revenue, customers and average spend as three candidates', () => {
+  const items = detectManagementDataCandidates('2026年9月22日のNORTH STAR BEANSの売上は160,000円、来客数は80人、客単価は2,000円でした。');
+  const byType = Object.fromEntries(items.map(item => [item.metricType, item]));
+  assert.equal(items.length, 3);
+  assert.equal(byType.revenue.amount, 160000);
+  assert.equal(byType.customers.amount, 80);
+  assert.equal(byType.average_spend.amount, 2000);
+});
