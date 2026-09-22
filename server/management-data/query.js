@@ -34,7 +34,8 @@ function managementDataContext(entry) {
   const amount = Number(entry.amount);
   if (!year || !month || !day || !Number.isFinite(amount)) return null;
   const businessName = entry.business_key === 'north-star-beans' ? 'NORTH STAR BEANS' : entry.business_key;
-  const names = { revenue:'売上', expense:'経費', profit:'利益', customers:'来客数', average_spend:'客単価', cash_balance:'現金残高' };\n  const metricName = names[entry.metric_type] || entry.metric_type;
+  const names = { revenue:'売上', expense:'経費', profit:'利益', customers:'来客数', average_spend:'客単価', cash_balance:'現金残高' };
+  const metricName = names[entry.metric_type] || entry.metric_type;
   const currency = entry.currency === 'JPY' ? '円' : entry.currency === 'COUNT' ? '人' : ` ${entry.currency}`;
   return {
     category: '経営数値',
