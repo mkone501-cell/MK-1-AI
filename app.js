@@ -128,10 +128,11 @@ function memoryCandidateView(item) {
 }
 
 function managementDataCandidateView(item) {
-  const labels = { revenue:'売上', expense:'経費', profit:'利益', cash_balance:'現金残高' };
+  const labels = { revenue:'売上', expense:'経費', profit:'利益', cash_balance:'現金残高', customers:'来客数', average_spend:'客単価' };
   const date = item.dataDate ? item.dataDate.replace(/-/g, '/') : '日付未指定';
   const canSave = Boolean(item.businessKey && item.dataDate);
-  return `<section class="memory-candidate notice" aria-label="経営数値の保存候補"><strong>経営数値の保存候補があります</strong><p>まだ保存していません。内容を確認してください。</p><small>${safe(labels[item.metricType] || item.metricType)} ・ ${safe(date)}</small><h3>${Number(item.amount).toLocaleString('ja-JP')}円</h3><p>${safe(item.originalText)}</p><p>${canSave ? '内容を確認して「確認して保存」を押した場合だけ保存します。' : '事業名と日付を安全に特定できないため、この候補は保存できません。事業名と日付を含めてもう一度入力してください。'}</p><div class="knowledge-actions">${canSave ? `<button type="button" class="primary" data-management-accept="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>確認して保存</button>` : ''}<button type="button" class="secondary" data-management-dismiss="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>今回は保存しない</button></div></section>`;
+  const unit = item.metricType === 'customers' || item.currency === 'COUNT' ? '人' : '円';
+  return `<section class="memory-candidate notice" aria-label="経営数値の保存候補"><strong>経営数値の保存候補があります</strong><p>まだ保存していません。内容を確認してください。</p><small>${safe(labels[item.metricType] || item.metricType)} ・ ${safe(date)}</small><h3>${Number(item.amount).toLocaleString('ja-JP')}${unit}</h3><p>${safe(item.originalText)}</p><p>${canSave ? '内容を確認して「確認して保存」を押した場合だけ保存します。' : '事業名と日付を安全に特定できないため、この候補は保存できません。事業名と日付を含めてもう一度入力してください。'}</p><div class="knowledge-actions">${canSave ? `<button type="button" class="primary" data-management-accept="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>確認して保存</button>` : ''}<button type="button" class="secondary" data-management-dismiss="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>今回は保存しない</button></div></section>`;
 }
 
 async function decideManagementDataCandidate(id, accept) {
