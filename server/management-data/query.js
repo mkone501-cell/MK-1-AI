@@ -5,7 +5,7 @@ function detectManagementDataQuery(message) {
   if (!text) return null;
 
   const businessKey = /NORTH\s*STAR\s*BEANS/i.test(text) ? 'north-star-beans' : null;
-  const metricType = /売上/.test(text) ? 'revenue' : null;
+  const metricType = /来客数|客数|来店客数/.test(text) ? 'customers' : /客単価|平均客単価/.test(text) ? 'average_spend' : /経費|費用/.test(text) ? 'expense' : /利益|営業利益/.test(text) ? 'profit' : /売上/.test(text) ? 'revenue' : null;
 
   let dataDate = null;
   const jp = text.match(/(20\d{2})年\s*(\d{1,2})月\s*(\d{1,2})日/);
@@ -34,8 +34,8 @@ function managementDataContext(entry) {
   const amount = Number(entry.amount);
   if (!year || !month || !day || !Number.isFinite(amount)) return null;
   const businessName = entry.business_key === 'north-star-beans' ? 'NORTH STAR BEANS' : entry.business_key;
-  const metricName = entry.metric_type === 'revenue' ? '売上' : entry.metric_type;
-  const currency = entry.currency === 'JPY' ? '円' : ` ${entry.currency}`;
+  const names = { revenue:'売上', expense:'経費', profit:'利益', customers:'来客数', average_spend:'客単価', cash_balance:'現金残高' };\n  const metricName = names[entry.metric_type] || entry.metric_type;
+  const currency = entry.currency === 'JPY' ? '円' : entry.currency === 'COUNT' ? '人' : ` ${entry.currency}`;
   return {
     category: '経営数値',
     title: `${metricName} ${year}/${month}/${day}`,

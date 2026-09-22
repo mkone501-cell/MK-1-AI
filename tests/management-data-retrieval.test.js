@@ -49,3 +49,16 @@ test('Phase 6.7 formats PostgreSQL Date values without dropping confirmed data',
   });
   assert.equal(context.body, '9月21日のNORTH STAR BEANSの売上は150,000円です。');
 });
+
+
+test('Phase 6.8 parses additional management metric questions', () => {
+  assert.equal(detectManagementDataQuery('2026年9月21日のNORTH STAR BEANSの来客数は何人ですか？').metricType, 'customers');
+  assert.equal(detectManagementDataQuery('2026年9月21日のNORTH STAR BEANSの客単価はいくらですか？').metricType, 'average_spend');
+  assert.equal(detectManagementDataQuery('2026年9月21日のNORTH STAR BEANSの経費はいくらですか？').metricType, 'expense');
+  assert.equal(detectManagementDataQuery('2026年9月21日のNORTH STAR BEANSの利益はいくらですか？').metricType, 'profit');
+});
+
+test('Phase 6.8 formats customer count as people', () => {
+  const context = managementDataContext({ business_key:'north-star-beans', data_date:'2026-09-21', metric_type:'customers', amount:'80', currency:'COUNT' });
+  assert.equal(context.body, '9月21日のNORTH STAR BEANSの来客数は80人です。');
+});
