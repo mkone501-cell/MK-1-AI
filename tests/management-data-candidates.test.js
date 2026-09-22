@@ -27,3 +27,22 @@ test('Phase 6.4 ignores text without a supported metric and amount', () => {
   assert.equal(detectManagementDataCandidate('今日は忙しかったです。'), null);
   assert.equal(detectManagementDataCandidate('売上は好調です。'), null);
 });
+
+
+test('Phase 6.9 detects confirmed-style customer count and average spend candidates with explicit business/date', () => {
+  const customers = detectManagementDataCandidate('2026年9月22日のNORTH STAR BEANSの来客数は80人でした。');
+  assert.equal(customers.businessKey, 'north-star-beans');
+  assert.equal(customers.metricType, 'customers');
+  assert.equal(customers.amount, 80);
+  assert.equal(customers.currency, 'COUNT');
+  assert.equal(customers.dataDate, '2026-09-22');
+  assert.equal(customers.confirmed, false);
+
+  const spend = detectManagementDataCandidate('2026年9月22日のNORTH STAR BEANSの客単価は1,850円でした。');
+  assert.equal(spend.businessKey, 'north-star-beans');
+  assert.equal(spend.metricType, 'average_spend');
+  assert.equal(spend.amount, 1850);
+  assert.equal(spend.currency, 'JPY');
+  assert.equal(spend.dataDate, '2026-09-22');
+  assert.equal(spend.confirmed, false);
+});
