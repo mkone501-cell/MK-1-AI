@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS management_data (
   owner_email TEXT NOT NULL,
   business_key TEXT NOT NULL,
   data_date DATE NOT NULL,
-  metric_type TEXT NOT NULL CHECK (metric_type IN ('revenue','expense','profit','cash_balance','other')),
+  metric_type TEXT NOT NULL CHECK (metric_type IN ('revenue','expense','profit','cash_balance','customers','average_spend','other')),
   amount NUMERIC(18,2) NOT NULL,
   currency CHAR(3) NOT NULL DEFAULT 'JPY',
   note TEXT,
