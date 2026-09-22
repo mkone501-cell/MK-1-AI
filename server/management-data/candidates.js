@@ -33,7 +33,9 @@ function detectManagementDataCandidate(message) {
   // Questions, estimates and plans are not treated as factual management data.
   if (/[?？]/.test(text) || /(見込み|予想|予定|目標|だいたい|約|くらい|ぐらい|想定|estimate|forecast|target)/i.test(text)) return null;
 
-  const amountMatch = metricType === 'customers'\n    ? text.match(/(-?\\d[\\d,]*(?:\\.\\d+)?)\\s*(人)/)\n    : text.match(/(?:¥|￥)?\\s*(-?\\d[\\d,]*(?:\\.\\d+)?)\\s*(億円|万円|千円|円)/);
+  const amountMatch = metricType === 'customers'
+    ? text.match(/(-?\d[\d,]*(?:\.\d+)?)\s*(人)/)
+    : text.match(/(?:¥|￥)?\s*(-?\d[\d,]*(?:\.\d+)?)\s*(億円|万円|千円|円)/);
   if (!amountMatch) return null;
   const amount = metricType === 'customers' ? Number(String(amountMatch[1]).replace(/,/g, '')) : parseAmount(amountMatch[1], amountMatch[2]);
   if (!Number.isFinite(amount)) return null;
