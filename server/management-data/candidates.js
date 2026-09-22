@@ -1,12 +1,12 @@
 'use strict';
 
 const METRIC_PATTERNS = [
-  { metricType:'revenue', labels:['売上','売上高','sales','revenue'] },
+  { metricType:'revenue', labels:['売上高','売上','revenue','sales'] },
   { metricType:'expense', labels:['経費','費用','expense','expenses'] },
-  { metricType:'profit', labels:['利益','営業利益','profit'] },
+  { metricType:'profit', labels:['営業利益','利益','profit'] },
   { metricType:'cash_balance', labels:['現金残高','預金残高','cash balance'] },
-  { metricType:'customers', labels:['来客数','客数','来店客数','customers'] },
-  { metricType:'average_spend', labels:['客単価','平均客単価','average spend','average ticket'] }
+  { metricType:'customers', labels:['来店客数','来客数','客数','customers'] },
+  { metricType:'average_spend', labels:['平均客単価','客単価','average ticket','average spend'] }
 ];
 
 function parseAmount(raw, unit) {
