@@ -78,8 +78,8 @@ function detectManagementDataCandidates(message) {
       .filter(item => text.toLowerCase().includes(item.toLowerCase()))
       .sort((a,b) => b.length - a.length)[0];
     if (!label) continue;
-    const escaped = label.replace(/[.*+?^$()|[\]\\]/g, '\\
-module.exports = { detectManagementDataCandidate, parseAmount };');
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\    const escaped = label.replace(/[.*+?^$()|[\]\\]/g, '\\
+module.exports = { detectManagementDataCandidate, parseAmount };');');
     const valuePattern = metric.metricType === 'customers'
       ? new RegExp(escaped + '[^\\d-]{0,12}(-?\\d[\\d,]*(?:\\.\\d+)?)\\s*人', 'i')
       : new RegExp(escaped + '[^\\d¥￥-]{0,12}(?:¥|￥)?\\s*(-?\\d[\\d,]*(?:\\.\\d+)?)\\s*(億円|万円|千円|円)', 'i');
