@@ -71,3 +71,16 @@ test('Phase 6.10 keeps bundled revenue, customers and average spend as three can
   assert.equal(byType.customers.amount, 80);
   assert.equal(byType.average_spend.amount, 2000);
 });
+
+
+test('Phase 6.10 prefers the specific metric label when a shorter label is contained inside it', () => {
+  const customers = detectManagementDataCandidates('2026年9月22日のNORTH STAR BEANSの来客数は80人でした。');
+  assert.equal(customers.length, 1);
+  assert.equal(customers[0].metricType, 'customers');
+  assert.equal(customers[0].amount, 80);
+
+  const spend = detectManagementDataCandidates('2026年9月22日のNORTH STAR BEANSの平均客単価は2,000円でした。');
+  assert.equal(spend.length, 1);
+  assert.equal(spend[0].metricType, 'average_spend');
+  assert.equal(spend[0].amount, 2000);
+});
