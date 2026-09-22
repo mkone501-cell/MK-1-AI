@@ -18,7 +18,7 @@ const { migrateKnowledge } = require('./knowledge/migrate-knowledge');
 const { validateKnowledge } = require('./knowledge/validation');
 const { knowledgeContext } = require('./knowledge/context');
 const { proposeMemory } = require('./knowledge/update-candidates');
-const { detectManagementDataCandidate } = require('./management-data/candidates');
+const { detectManagementDataCandidate, detectManagementDataCandidates } = require('./management-data/candidates');
 const { PostgresManagementDataRepository } = require('./management-data/postgres-management-data-repository');
 const { migrateManagementData } = require('./management-data/migrate-management-data');
 const { detectManagementDataQuery, managementDataContext } = require('./management-data/query');
@@ -309,11 +309,13 @@ function createApplication(options = {}) {
         if (body.confirmed !== true || typeof body.originalText !== 'string') {
           return respondJson(req, res, 400, { error:'保存には本人の明示的な確認が必要です。' });
         }
-        const candidate = detectManagementDataCandidate(body.originalText);
-        if (!candidate || !candidate.businessKey || !candidate.dataDate ||
-            candidate.metricType !== body.metricType || candidate.amount !== Number(body.amount) ||
-            candidate.currency !== body.currency || candidate.businessKey !== body.businessKey ||
-            candidate.dataDate !== body.dataDate) {
+        const candidate = detectManagementDataCandidates(body.originalText).find(item =>
+          item.businessKey && item.dataDate &&
+          item.metricType === body.metricType && item.amount === Number(body.amount) &&
+          item.currency === body.currency && item.businessKey === body.businessKey &&
+          item.dataDate === body.dataDate
+        );
+        if (!candidate) {
           return respondJson(req, res, 409, { error:'事業・日付・数値を安全に確認できません。もう一度会話から入力してください。' });
         }
         const saved = await managementData.create(auth.ownerEmail, {
@@ -361,7 +363,7 @@ function createApplication(options = {}) {
             try { proposals = await proposeMemory(message, knowledge, session.user.id, config, req); }
             catch { logger.error('knowledge.candidate_failed'); return respondJson(req, res, 503, { error:'既存の経営知識を確認できませんでした。時間をおいてお試しください。' }); }
           }
-          const managementDataCandidate = detectManagementDataCandidate(message);
+          const managementDataCandidates = detectManagementDataCandidates(message);
           if (managementData) {
             const managementQuery = detectManagementDataQuery(message);
             if (managementQuery) {
@@ -384,7 +386,7 @@ function createApplication(options = {}) {
             const conversationId = await conversations.appendExchange({ ownerId:session.user.id, conversationId:id, message, answer:result.answer });
             return respondJson(req, res, 200, { ...result, conversationId,
               memoryCandidates:proposals,
-              managementDataCandidates:managementDataCandidate ? [managementDataCandidate] : [] });
+              managementDataCandidates });
           } catch {
             logger.error('conversation.save_failed');
             return respondJson(req, res, 503, { error:'会話を保存できませんでした。時間をおいてお試しください。' });
