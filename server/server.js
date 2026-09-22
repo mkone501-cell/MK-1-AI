@@ -368,7 +368,7 @@ function createApplication(options = {}) {
             const managementQuery = detectManagementDataQuery(message);
             if (managementQuery) {
               try {
-                if (managementQuery.metricType === 'daily_summary') {
+                if (managementQuery.metricType === 'daily_summary' || managementQuery.metricType === 'daily_analysis') {
                   const entries = await managementData.findDaily(auth.ownerEmail, managementQuery);
                   const context = managementDataSummaryContext(entries);
                   if (context) selectedKnowledge = [...selectedKnowledge, context];
