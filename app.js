@@ -275,7 +275,7 @@ async function handleChat(text) {
     activeConversationId = result.conversationId;
     // Replace the preceding turn's unapproved candidates; bound transient UI memory.
     memoryProposals = (result.memoryCandidates || []).slice(0, 1).map(item => ({ ...item, id:String(++proposalSequence) }));
-    managementDataProposals = (result.managementDataCandidates || []).slice(0, 1).map(item => ({ ...item, id:`management-${++proposalSequence}` }));
+    managementDataProposals = (result.managementDataCandidates || []).slice(0, 6).map(item => ({ ...item, id:`management-${++proposalSequence}` }));
   }
   if (result.mode === 'demo' && !result.task) result.task = demoChatResult(msg).task;
   if (result.task) state.tasks.unshift(result.task);
