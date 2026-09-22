@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataCandidate } = require('../server/management-data/candidates');
+const { detectManagementDataCandidate, detectManagementDataCandidates } = require('../server/management-data/candidates');
 
 test('Phase 6.4 detects a factual revenue number but never confirms it automatically', () => {
   const item = detectManagementDataCandidate('2026年9月21日のNORTH STAR BEANSの売上は25万円です。');
@@ -45,4 +45,19 @@ test('Phase 6.9 detects confirmed-style customer count and average spend candida
   assert.equal(spend.currency, 'JPY');
   assert.equal(spend.dataDate, '2026-09-22');
   assert.equal(spend.confirmed, false);
+});
+
+
+test('Phase 6.10 extracts multiple daily metrics from one explicit owner report without confirming them', () => {
+  const items = detectManagementDataCandidates('2026年9月22日のNORTH STAR BEANSの売上は160,000円、来客数は80人、客単価は2,000円でした。');
+  assert.equal(items.length, 3);
+  assert.deepEqual(items.map(item => item.metricType), ['revenue', 'customers', 'average_spend']);
+  assert.deepEqual(items.map(item => item.amount), [160000, 80, 2000]);
+  assert.ok(items.every(item => item.businessKey === 'north-star-beans'));
+  assert.ok(items.every(item => item.dataDate === '2026-09-22'));
+  assert.ok(items.every(item => item.confirmed === false));
+});
+
+test('Phase 6.10 still rejects a bundled forecast instead of creating save candidates', () => {
+  assert.deepEqual(detectManagementDataCandidates('2026年9月23日のNORTH STAR BEANSの売上見込みは20万円、来客数は90人です。'), []);
 });

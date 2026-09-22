@@ -59,4 +59,49 @@ function detectManagementDataCandidate(message) {
   };
 }
 
-module.exports = { detectManagementDataCandidate, parseAmount };
+
+function detectManagementDataCandidates(message) {
+  if (typeof message !== 'string') return [];
+  const text = message.trim();
+  if (!text || text.length > 8000) return [];
+  if (/[?？]/.test(text) || /(見込み|予想|予定|目標|だいたい|約|くらい|ぐらい|想定|estimate|forecast|target)/i.test(text)) return [];
+
+  const dateMatch = text.match(/(20\d{2})[年\/-](\d{1,2})[月\/-](\d{1,2})日?/);
+  const dataDate = dateMatch
+    ? dateMatch[1] + '-' + String(dateMatch[2]).padStart(2,'0') + '-' + String(dateMatch[3]).padStart(2,'0')
+    : null;
+  const businessKey = /NORTH\s+STAR\s+BEANS/i.test(text) ? 'north-star-beans' : null;
+  const candidates = [];
+
+  for (const metric of METRIC_PATTERNS) {
+    const label = metric.labels
+      .filter(item => text.toLowerCase().includes(item.toLowerCase()))
+      .sort((a,b) => b.length - a.length)[0];
+    if (!label) continue;
+    const escaped = label.replace(/[.*+?^$()|[\]\\]/g, '\\
+module.exports = { detectManagementDataCandidate, parseAmount };');
+    const valuePattern = metric.metricType === 'customers'
+      ? new RegExp(escaped + '[^\\d-]{0,12}(-?\\d[\\d,]*(?:\\.\\d+)?)\\s*人', 'i')
+      : new RegExp(escaped + '[^\\d¥￥-]{0,12}(?:¥|￥)?\\s*(-?\\d[\\d,]*(?:\\.\\d+)?)\\s*(億円|万円|千円|円)', 'i');
+    const match = text.match(valuePattern);
+    if (!match) continue;
+    const amount = metric.metricType === 'customers'
+      ? Number(String(match[1]).replace(/,/g, ''))
+      : parseAmount(match[1], match[2]);
+    if (!Number.isFinite(amount)) continue;
+    candidates.push({
+      kind:'management-data',
+      businessKey,
+      metricType:metric.metricType,
+      amount,
+      currency:metric.metricType === 'customers' ? 'COUNT' : 'JPY',
+      dataDate,
+      source:'owner conversation',
+      originalText:text,
+      confirmed:false
+    });
+  }
+  return candidates;
+}
+
+module.exports = { detectManagementDataCandidate, detectManagementDataCandidates, parseAmount };
