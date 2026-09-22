@@ -92,3 +92,18 @@ test('Phase 6.11 formats multiple confirmed daily metrics as one Mirai context',
   assert.match(context.body, /客単価は2,000円/);
   assert.equal(context.source, '本人確認済み経営数値');
 });
+
+
+test('Phase 6.12 parses a daily management analysis question', () => {
+  assert.deepEqual(
+    detectManagementDataQuery('2026年9月22日のNORTH STAR BEANSの経営状況を分析して'),
+    { businessKey:'north-star-beans', metricType:'daily_analysis', dataDate:'2026-09-22' }
+  );
+});
+
+test('Phase 6.12 keeps ordinary daily summary questions as summaries', () => {
+  assert.equal(
+    detectManagementDataQuery('2026年9月22日のNORTH STAR BEANSの経営状況を教えて').metricType,
+    'daily_summary'
+  );
+});
