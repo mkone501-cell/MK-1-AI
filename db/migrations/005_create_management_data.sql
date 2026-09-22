@@ -18,3 +18,21 @@ CREATE INDEX IF NOT EXISTS management_data_owner_business_date_idx
 
 CREATE INDEX IF NOT EXISTS management_data_metric_idx
   ON management_data (owner_email, metric_type, data_date DESC);
+
+
+-- Existing installations created before customer metrics were introduced need their CHECK constraint widened.
+DO $$
+DECLARE constraint_name TEXT;
+BEGIN
+  SELECT conname INTO constraint_name
+    FROM pg_constraint
+   WHERE conrelid = 'management_data'::regclass
+     AND contype = 'c'
+     AND pg_get_constraintdef(oid) LIKE '%metric_type%';
+  IF constraint_name IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE management_data DROP CONSTRAINT %I', constraint_name);
+  END IF;
+  ALTER TABLE management_data
+    ADD CONSTRAINT management_data_metric_type_check
+    CHECK (metric_type IN ('revenue','expense','profit','cash_balance','customers','average_spend','other'));
+END $$;
