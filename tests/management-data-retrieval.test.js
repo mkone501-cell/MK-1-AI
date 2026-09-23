@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataPeriodContext, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges } = require('../server/management-data/query');
+const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
 
 test('Phase 6.7 parses a confirmed management-data fact question', () => {
@@ -469,4 +469,56 @@ test('Phase 6.19 isolates annual comparison from unrelated context', () => {
   });
   assert.deepEqual(scoped.history, []);
   assert.deepEqual(scoped.knowledge, [comparison]);
+});
+
+
+test('Phase 6.20 parses an explicit year range into every year up to five years', () => {
+  const query = detectManagementDataQuery('2023年から2026年までのNORTH STAR BEANSの経営状況の推移を分析して');
+  assert.equal(query.metricType, 'annual_period_analysis');
+  assert.deepEqual(query.years.map(item => item.label), ['2023年','2024年','2025年','2026年']);
+  assert.deepEqual(query.years.map(item => [item.startDate,item.endDate]), [
+    ['2023-01-01','2023-12-31'],
+    ['2024-01-01','2024-12-31'],
+    ['2025-01-01','2025-12-31'],
+    ['2026-01-01','2026-12-31']
+  ]);
+});
+
+test('Phase 6.20 rejects reversed or more-than-five-year ranges', () => {
+  assert.deepEqual(enumerateYearRanges({ year:2026 }, { year:2023 }), []);
+  assert.deepEqual(enumerateYearRanges({ year:2021 }, { year:2026 }), []);
+  assert.equal(
+    detectManagementDataQuery('2021年から2026年までのNORTH STAR BEANSの推移を分析して'),
+    null
+  );
+});
+
+test('Phase 6.20 keeps missing years explicit without converting them to zero', () => {
+  const context = managementDataMultiYearContext([
+    { label:'2024年', startDate:'2024-01-01', endDate:'2024-12-31', entries:[] },
+    { label:'2025年', startDate:'2025-01-01', endDate:'2025-12-31', entries:[] },
+    {
+      label:'2026年', startDate:'2026-01-01', endDate:'2026-12-31',
+      entries:[
+        { business_key:'north-star-beans', data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' },
+        { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' }
+      ]
+    }
+  ]);
+  assert.match(context.body, /データ未登録の年: 2024年、2025年/);
+  assert.match(context.body, /2026年/);
+  assert.match(context.body, /登録済み日は2日/);
+  assert.match(context.body, /未登録日・未登録年は0として扱わない/);
+});
+
+test('Phase 6.20 isolates multi-year trend analysis from unrelated context', () => {
+  const period = { category:'経営数値', title:'複数年の経営推移', body:'確認済みデータのみ', source:'本人確認済み経営数値' };
+  const scoped = scopeManagementAnalysisInputs({
+    query:{ businessKey:'north-star-beans', metricType:'annual_period_analysis', years:[] },
+    history:[{ role:'user', content:'年間営業日を300日として計算して' }],
+    knowledge:[{ category:'目標', title:'年商目標', body:'3600万円' }],
+    context:period
+  });
+  assert.deepEqual(scoped.history, []);
+  assert.deepEqual(scoped.knowledge, [period]);
 });
