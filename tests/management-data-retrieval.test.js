@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext } = require('../server/management-data/query');
+const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, scopeManagementAnalysisInputs } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
 
 test('Phase 6.7 parses a confirmed management-data fact question', () => {
@@ -106,4 +106,29 @@ test('Phase 6.12 keeps ordinary daily summary questions as summaries', () => {
     detectManagementDataQuery('2026年9月22日のNORTH STAR BEANSの経営状況を教えて').metricType,
     'daily_summary'
   );
+});
+
+
+test('Phase 6.12 fix isolates daily analysis from conversation history and general knowledge', () => {
+  const dailyContext = { category:'経営数値', title:'日次経営状況 2026/09/22', body:'売上160,000円、来客数80人、客単価2,000円', source:'本人確認済み経営数値' };
+  const scoped = scopeManagementAnalysisInputs({
+    query:{ businessKey:'north-star-beans', metricType:'daily_analysis', dataDate:'2026-09-22' },
+    history:[{ role:'user', content:'月の営業日は26日と仮定して' }],
+    knowledge:[{ category:'店舗', title:'座席数', body:'30席' }, { category:'目標', title:'月商目標', body:'300万円' }],
+    context:dailyContext
+  });
+  assert.deepEqual(scoped.history, []);
+  assert.deepEqual(scoped.knowledge, [dailyContext]);
+});
+
+test('Phase 6.12 fix keeps normal daily summary context behavior', () => {
+  const history = [{ role:'user', content:'前の質問' }];
+  const knowledge = [{ category:'店舗', title:'営業時間', body:'9時から16時' }];
+  const dailyContext = { category:'経営数値', title:'日次経営状況 2026/09/22', body:'売上160,000円', source:'本人確認済み経営数値' };
+  const scoped = scopeManagementAnalysisInputs({
+    query:{ businessKey:'north-star-beans', metricType:'daily_summary', dataDate:'2026-09-22' },
+    history, knowledge, context:dailyContext
+  });
+  assert.deepEqual(scoped.history, history);
+  assert.deepEqual(scoped.knowledge, [...knowledge, dailyContext]);
 });
