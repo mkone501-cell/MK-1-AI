@@ -65,6 +65,22 @@ class PostgresManagementDataRepository {
     );
     return result.rows || [];
   }
+  async findRange(ownerEmail, query) {
+    if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
+    if (!query?.businessKey || !query?.startDate || !query?.endDate) return [];
+    const result = await this.pool.query(
+      `SELECT DISTINCT ON (data_date, metric_type)
+              id, owner_email, business_key, data_date, metric_type, amount, currency, note, source,
+              confirmed_by_owner, created_at, updated_at
+         FROM management_data
+        WHERE owner_email = $1 AND business_key = $2
+          AND data_date BETWEEN $3::date AND $4::date
+          AND confirmed_by_owner = TRUE
+        ORDER BY data_date, metric_type, updated_at DESC, created_at DESC`,
+      [ownerEmail.trim(), query.businessKey, query.startDate, query.endDate]
+    );
+    return result.rows || [];
+  }
 }
 
 module.exports = { PostgresManagementDataRepository, normalizeEntry };

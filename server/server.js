@@ -21,7 +21,7 @@ const { proposeMemory } = require('./knowledge/update-candidates');
 const { detectManagementDataCandidate, detectManagementDataCandidates } = require('./management-data/candidates');
 const { PostgresManagementDataRepository } = require('./management-data/postgres-management-data-repository');
 const { migrateManagementData } = require('./management-data/migrate-management-data');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, scopeManagementAnalysisInputs } = require('./management-data/query');
+const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
 
 const ROOT = path.resolve(__dirname, '..');
 const MAX_BODY_BYTES = 32 * 1024;
@@ -369,7 +369,13 @@ function createApplication(options = {}) {
             const managementQuery = detectManagementDataQuery(message);
             if (managementQuery) {
               try {
-                if (managementQuery.metricType === 'daily_comparison') {
+                if (managementQuery.metricType === 'period_analysis') {
+                  const entries = await managementData.findRange(auth.ownerEmail, managementQuery);
+                  const context = managementDataPeriodContext(entries, managementQuery.startDate, managementQuery.endDate);
+                  const scoped = scopeManagementAnalysisInputs({ query:managementQuery, history:replyHistory, knowledge:selectedKnowledge, context });
+                  replyHistory = scoped.history;
+                  selectedKnowledge = scoped.knowledge;
+                } else if (managementQuery.metricType === 'daily_comparison') {
                   const groups = [];
                   for (const dataDate of managementQuery.dataDates) {
                     groups.push({ dataDate, entries:await managementData.findDaily(auth.ownerEmail, { ...managementQuery, dataDate }) });

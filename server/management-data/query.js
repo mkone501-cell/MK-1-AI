@@ -50,6 +50,15 @@ function detectManagementDataQuery(message) {
   if (!text) return null;
   const { businessKey, dataDates } = parseBusinessAndDates(text);
   const dataDate = dataDates[0] || null;
+  const rangeRequested = /(?:から.*まで|[〜～~]|期間|推移|傾向|トレンド)/.test(text);
+  if (businessKey && rangeRequested && dataDates.length >= 2) {
+    const [startDate, endDate] = dataDates.slice(0, 2);
+    const start = new Date(`${startDate}T00:00:00.000Z`);
+    const end = new Date(`${endDate}T00:00:00.000Z`);
+    const days = Math.floor((end - start) / 86400000) + 1;
+    if (days >= 1 && days <= 31) return { businessKey, metricType:'period_analysis', startDate, endDate };
+    return null;
+  }
   const comparisonRequested = /比較|比べ|違い|差(?:は|を|が)?/.test(text);
   if (businessKey && comparisonRequested && dataDates.length >= 2) {
     return { businessKey, metricType:'daily_comparison', dataDates:dataDates.slice(0, 2) };
@@ -85,6 +94,22 @@ function managementDataSummaryContext(entries) {
 }
 
 
+function managementDataPeriodContext(entries, startDate, endDate) {
+  const rows = Array.isArray(entries) ? entries : [];
+  const groups = new Map();
+  for (const entry of rows) {
+    const rawDate = entry?.data_date instanceof Date ? entry.data_date.toISOString().slice(0, 10) : String(entry?.data_date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) continue;
+    if (!groups.has(rawDate)) groups.set(rawDate, []);
+    groups.get(rawDate).push(entry);
+  }
+  const summaries = [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, items]) => managementDataSummaryContext(items)).filter(Boolean);
+  const body = summaries.length
+    ? `${startDate}から${endDate}までの期間で、本人確認済み経営数値が保存されている日だけを列挙します（未登録日は0として扱いません）。\n${summaries.map(item => item.body).join('\n')}`
+    : `${startDate}から${endDate}までの期間に、本人確認済み経営数値はありません。`;
+  return { category:'経営数値', title:`期間経営状況 ${startDate}〜${endDate}`, body, source:'本人確認済み経営数値' };
+}
+
 function managementDataComparisonContext(groups) {
   const items = (Array.isArray(groups) ? groups : []).map(group => ({
     dataDate:group?.dataDate,
@@ -98,10 +123,10 @@ function managementDataComparisonContext(groups) {
 function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], context = null }) {
   const safeHistory = Array.isArray(history) ? history : [];
   const safeKnowledge = Array.isArray(knowledge) ? knowledge : [];
-  if (query?.metricType === 'daily_analysis' || query?.metricType === 'daily_comparison') {
+  if (query?.metricType === 'daily_analysis' || query?.metricType === 'daily_comparison' || query?.metricType === 'period_analysis') {
     return { history:[], knowledge:context ? [context] : [] };
   }
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, scopeManagementAnalysisInputs, parseBusinessAndDates };
+module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataPeriodContext, scopeManagementAnalysisInputs, parseBusinessAndDates };
