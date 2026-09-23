@@ -18,10 +18,42 @@ function parseBusinessAndDate(text) {
   return { businessKey, dataDate };
 }
 
+function validIsoDate(year, month, day) {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function parseBusinessAndDates(text) {
+  const businessKey = /NORTH\s*STAR\s*BEANS/i.test(text) ? 'north-star-beans' : null;
+  const found = [];
+  let inheritedYear = null;
+  const jp = /(?:(20\d{2})年\s*)?(\d{1,2})月\s*(\d{1,2})日/g;
+  for (const match of text.matchAll(jp)) {
+    const year = match[1] ? Number(match[1]) : inheritedYear;
+    if (match[1]) inheritedYear = Number(match[1]);
+    if (!year) continue;
+    const value = validIsoDate(year, Number(match[2]), Number(match[3]));
+    if (value) found.push({ index:match.index, value });
+  }
+  const iso = /(20\d{2})[-\/]([01]?\d)[-\/]([0-3]?\d)/g;
+  for (const match of text.matchAll(iso)) {
+    const value = validIsoDate(Number(match[1]), Number(match[2]), Number(match[3]));
+    if (value) found.push({ index:match.index, value });
+  }
+  found.sort((a, b) => a.index - b.index);
+  return { businessKey, dataDates:[...new Set(found.map(item => item.value))] };
+}
+
 function detectManagementDataQuery(message) {
   const text = String(message || '').trim();
   if (!text) return null;
-  const { businessKey, dataDate } = parseBusinessAndDate(text);
+  const { businessKey, dataDates } = parseBusinessAndDates(text);
+  const dataDate = dataDates[0] || null;
+  const comparisonRequested = /比較|比べ|違い|差(?:は|を|が)?/.test(text);
+  if (businessKey && comparisonRequested && dataDates.length >= 2) {
+    return { businessKey, metricType:'daily_comparison', dataDates:dataDates.slice(0, 2) };
+  }
   const analysisRequested = /分析|評価|考察|どう(?:だった|でした)|良かった|悪かった/.test(text);
   const summaryRequested = /経営状況|経営数値|日次(?:の)?(?:状況|実績|まとめ)|まとめて/.test(text);
   const metricType = analysisRequested && summaryRequested ? 'daily_analysis' : summaryRequested ? 'daily_summary' : /来客数|客数|来店客数/.test(text) ? 'customers' : /客単価|平均客単価/.test(text) ? 'average_spend' : /経費|費用/.test(text) ? 'expense' : /利益|営業利益/.test(text) ? 'profit' : /売上/.test(text) ? 'revenue' : null;
@@ -53,13 +85,23 @@ function managementDataSummaryContext(entries) {
 }
 
 
+function managementDataComparisonContext(groups) {
+  const items = (Array.isArray(groups) ? groups : []).map(group => ({
+    dataDate:group?.dataDate,
+    context:managementDataSummaryContext(group?.entries || [])
+  })).filter(item => item.dataDate);
+  if (!items.length) return null;
+  const body = items.map(item => item.context ? item.context.body : `${item.dataDate}の本人確認済み経営数値はありません。`).join('\n');
+  return { category:'経営数値', title:'日次経営状況の比較', body, source:'本人確認済み経営数値' };
+}
+
 function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], context = null }) {
   const safeHistory = Array.isArray(history) ? history : [];
   const safeKnowledge = Array.isArray(knowledge) ? knowledge : [];
-  if (query?.metricType === 'daily_analysis') {
+  if (query?.metricType === 'daily_analysis' || query?.metricType === 'daily_comparison') {
     return { history:[], knowledge:context ? [context] : [] };
   }
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, scopeManagementAnalysisInputs };
+module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, scopeManagementAnalysisInputs, parseBusinessAndDates };

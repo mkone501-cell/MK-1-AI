@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, scopeManagementAnalysisInputs } = require('../server/management-data/query');
+const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, scopeManagementAnalysisInputs, parseBusinessAndDates } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
 
 test('Phase 6.7 parses a confirmed management-data fact question', () => {
@@ -131,4 +131,45 @@ test('Phase 6.12 fix keeps normal daily summary context behavior', () => {
   });
   assert.deepEqual(scoped.history, history);
   assert.deepEqual(scoped.knowledge, [...knowledge, dailyContext]);
+});
+
+
+test('Phase 6.13 parses two dates for a daily comparison', () => {
+  assert.deepEqual(
+    detectManagementDataQuery('2026年9月21日と9月22日のNORTH STAR BEANSの経営状況を比較して'),
+    { businessKey:'north-star-beans', metricType:'daily_comparison', dataDates:['2026-09-21','2026-09-22'] }
+  );
+  assert.deepEqual(
+    parseBusinessAndDates('NORTH STAR BEANSの2026/09/21と2026/09/22を比べて').dataDates,
+    ['2026-09-21','2026-09-22']
+  );
+});
+
+test('Phase 6.13 formats two confirmed days into one comparison context', () => {
+  const context = managementDataComparisonContext([
+    { dataDate:'2026-09-21', entries:[
+      { business_key:'north-star-beans', data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' },
+      { business_key:'north-star-beans', data_date:'2026-09-21', metric_type:'customers', amount:'75', currency:'COUNT' }
+    ] },
+    { dataDate:'2026-09-22', entries:[
+      { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' },
+      { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'customers', amount:'80', currency:'COUNT' }
+    ] }
+  ]);
+  assert.match(context.body, /9月21日.*売上は150,000円/);
+  assert.match(context.body, /9月22日.*売上は160,000円/);
+  assert.match(context.body, /来客数は75人/);
+  assert.match(context.body, /来客数は80人/);
+});
+
+test('Phase 6.13 isolates comparison from unrelated history and general knowledge', () => {
+  const comparison = { category:'経営数値', title:'日次経営状況の比較', body:'9月21日...\n9月22日...', source:'本人確認済み経営数値' };
+  const scoped = scopeManagementAnalysisInputs({
+    query:{ businessKey:'north-star-beans', metricType:'daily_comparison', dataDates:['2026-09-21','2026-09-22'] },
+    history:[{ role:'user', content:'26営業日で計算して' }],
+    knowledge:[{ category:'店舗', title:'座席数', body:'30席' }],
+    context:comparison
+  });
+  assert.deepEqual(scoped.history, []);
+  assert.deepEqual(scoped.knowledge, [comparison]);
 });
