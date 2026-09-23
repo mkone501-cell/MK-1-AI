@@ -45,22 +45,53 @@ function parseBusinessAndDates(text) {
   return { businessKey, dataDates:[...new Set(found.map(item => item.value))] };
 }
 
-function parseBusinessAndMonthRange(text) {
-  const businessKey = /NORTH\s*STAR\s*BEANS/i.test(text) ? 'north-star-beans' : null;
-  if (!businessKey) return null;
-  const jp = text.match(/(20\d{2})年\s*(\d{1,2})月(?!\s*\d{1,2}日)/);
-  const iso = text.match(/(20\d{2})[-\/]([01]?\d)(?![-\/]\d)/);
-  const match = jp || iso;
-  if (!match) return null;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  if (month < 1 || month > 12) return null;
+function monthRange(year, month) {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return null;
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
   return {
-    businessKey,
+    year,
+    month,
     startDate:validIsoDate(year, month, 1),
-    endDate:validIsoDate(year, month, lastDay)
+    endDate:validIsoDate(year, month, lastDay),
+    label:`${year}年${month}月`
   };
+}
+
+function parseBusinessAndMonths(text) {
+  const businessKey = /NORTH\s*STAR\s*BEANS/i.test(text) ? 'north-star-beans' : null;
+  if (!businessKey) return { businessKey:null, months:[] };
+  const found = [];
+  let inheritedYear = null;
+  const jp = /(?:(20\d{2})年\s*)?(\d{1,2})月(?!\s*\d{1,2}日)/g;
+  for (const match of text.matchAll(jp)) {
+    const year = match[1] ? Number(match[1]) : inheritedYear;
+    if (match[1]) inheritedYear = Number(match[1]);
+    if (!year) continue;
+    const range = monthRange(year, Number(match[2]));
+    if (range) found.push({ index:match.index, ...range });
+  }
+  const iso = /(20\d{2})[-\/]([01]?\d)(?![-\/]\d)/g;
+  for (const match of text.matchAll(iso)) {
+    const range = monthRange(Number(match[1]), Number(match[2]));
+    if (range) found.push({ index:match.index, ...range });
+  }
+  found.sort((a, b) => a.index - b.index);
+  const seen = new Set();
+  const months = [];
+  for (const item of found) {
+    const key = `${item.year}-${String(item.month).padStart(2, '0')}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    months.push({ year:item.year, month:item.month, startDate:item.startDate, endDate:item.endDate, label:item.label });
+  }
+  return { businessKey, months };
+}
+
+function parseBusinessAndMonthRange(text) {
+  const { businessKey, months } = parseBusinessAndMonths(text);
+  if (!businessKey || !months.length) return null;
+  const first = months[0];
+  return { businessKey, startDate:first.startDate, endDate:first.endDate };
 }
 
 function detectManagementDataQuery(message) {
@@ -82,7 +113,15 @@ function detectManagementDataQuery(message) {
     return { businessKey, metricType:'daily_comparison', dataDates:dataDates.slice(0, 2) };
   }
   if (!dataDates.length) {
-    const monthRange = parseBusinessAndMonthRange(text);
+    const monthParse = parseBusinessAndMonths(text);
+    if (comparisonRequested && monthParse.months.length >= 2) {
+      return { businessKey:monthParse.businessKey, metricType:'monthly_comparison', months:monthParse.months.slice(0, 2) };
+    }
+    const monthRange = monthParse.months[0] ? {
+      businessKey:monthParse.businessKey,
+      startDate:monthParse.months[0].startDate,
+      endDate:monthParse.months[0].endDate
+    } : null;
     const monthRequested = /月次|月間|経営状況|経営数値|売上|来客数|客単価|経費|利益|分析|まとめ|推移|傾向/.test(text);
     if (monthRange && monthRequested) {
       return { businessKey:monthRange.businessKey, metricType:'period_analysis', startDate:monthRange.startDate, endDate:monthRange.endDate };
@@ -135,6 +174,20 @@ function managementDataPeriodContext(entries, startDate, endDate) {
   return { category:'経営数値', title:`期間経営状況 ${startDate}〜${endDate}`, body, source:'本人確認済み経営数値' };
 }
 
+function managementDataMonthlyComparisonContext(groups) {
+  const items = (Array.isArray(groups) ? groups : []).map(group => {
+    const context = managementDataPeriodContext(group?.entries || [], group?.startDate, group?.endDate);
+    return { label:group?.label || `${group?.startDate}〜${group?.endDate}`, context };
+  }).filter(item => item.context);
+  if (!items.length) return null;
+  return {
+    category:'経営数値',
+    title:'月次経営状況の比較',
+    body:`本人確認済み経営数値だけで月ごとに比較してください。未登録日は0として扱わず、各月の登録済み日数が違う場合は単純な月間合計の優劣を断定しないでください。\n${items.map(item => `${item.label}:\n${item.context.body}`).join('\n')}`,
+    source:'本人確認済み経営数値'
+  };
+}
+
 function managementDataComparisonContext(groups) {
   const items = (Array.isArray(groups) ? groups : []).map(group => ({
     dataDate:group?.dataDate,
@@ -148,10 +201,10 @@ function managementDataComparisonContext(groups) {
 function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], context = null }) {
   const safeHistory = Array.isArray(history) ? history : [];
   const safeKnowledge = Array.isArray(knowledge) ? knowledge : [];
-  if (query?.metricType === 'daily_analysis' || query?.metricType === 'daily_comparison' || query?.metricType === 'period_analysis') {
+  if (query?.metricType === 'daily_analysis' || query?.metricType === 'daily_comparison' || query?.metricType === 'period_analysis' || query?.metricType === 'monthly_comparison') {
     return { history:[], knowledge:context ? [context] : [] };
   }
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataPeriodContext, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonthRange };
+module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataPeriodContext, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange };
