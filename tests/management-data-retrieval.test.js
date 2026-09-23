@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataPeriodContext, scopeManagementAnalysisInputs, parseBusinessAndDates } = require('../server/management-data/query');
+const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataPeriodContext, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonthRange } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
 
 test('Phase 6.7 parses a confirmed management-data fact question', () => {
@@ -223,4 +223,30 @@ test('Phase 6.14 isolates period analysis from unrelated history and general kno
   });
   assert.deepEqual(scoped.history, []);
   assert.deepEqual(scoped.knowledge, [period]);
+});
+
+
+test('Phase 6.15 parses an explicit month as a period analysis', () => {
+  assert.deepEqual(
+    detectManagementDataQuery('2026年9月のNORTH STAR BEANSの経営状況を分析して'),
+    { businessKey:'north-star-beans', metricType:'period_analysis', startDate:'2026-09-01', endDate:'2026-09-30' }
+  );
+  assert.deepEqual(
+    detectManagementDataQuery('NORTH STAR BEANSの2026/09の売上をまとめて'),
+    { businessKey:'north-star-beans', metricType:'period_analysis', startDate:'2026-09-01', endDate:'2026-09-30' }
+  );
+});
+
+test('Phase 6.15 resolves month end safely including leap years', () => {
+  assert.deepEqual(
+    parseBusinessAndMonthRange('2028年2月のNORTH STAR BEANSの月次経営状況'),
+    { businessKey:'north-star-beans', startDate:'2028-02-01', endDate:'2028-02-29' }
+  );
+});
+
+test('Phase 6.15 does not turn an explicit daily question into a monthly query', () => {
+  assert.deepEqual(
+    detectManagementDataQuery('2026年9月22日のNORTH STAR BEANSの売上はいくらですか？'),
+    { businessKey:'north-star-beans', metricType:'revenue', dataDate:'2026-09-22' }
+  );
 });
