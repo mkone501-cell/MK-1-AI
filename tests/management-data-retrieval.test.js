@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataPeriodContext, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange } = require('../server/management-data/query');
+const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataMultiMonthContext, managementDataPeriodContext, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, enumerateMonthRanges } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
 
 test('Phase 6.7 parses a confirmed management-data fact question', () => {
@@ -309,4 +309,61 @@ test('Phase 6.16 isolates monthly comparison from unrelated history and general 
   });
   assert.deepEqual(scoped.history, []);
   assert.deepEqual(scoped.knowledge, [comparison]);
+});
+
+
+test('Phase 6.17 parses an explicit month range into every month up to 12 months', () => {
+  const query = detectManagementDataQuery('2026年7月から9月までのNORTH STAR BEANSの経営状況の推移を分析して');
+  assert.equal(query.metricType, 'monthly_period_analysis');
+  assert.deepEqual(query.months.map(item => item.label), ['2026年7月','2026年8月','2026年9月']);
+  assert.deepEqual(query.months.map(item => [item.startDate,item.endDate]), [
+    ['2026-07-01','2026-07-31'],
+    ['2026-08-01','2026-08-31'],
+    ['2026-09-01','2026-09-30']
+  ]);
+});
+
+test('Phase 6.17 rejects reversed or more-than-12-month ranges', () => {
+  assert.deepEqual(enumerateMonthRanges(
+    { year:2026, month:9 },
+    { year:2026, month:7 }
+  ), []);
+  assert.deepEqual(enumerateMonthRanges(
+    { year:2025, month:1 },
+    { year:2026, month:1 }
+  ), []);
+  assert.equal(
+    detectManagementDataQuery('2025年1月から2026年1月までのNORTH STAR BEANSの推移を分析して'),
+    null
+  );
+});
+
+test('Phase 6.17 keeps missing months explicit without converting them to zero', () => {
+  const context = managementDataMultiMonthContext([
+    { label:'2026年7月', startDate:'2026-07-01', endDate:'2026-07-31', entries:[] },
+    { label:'2026年8月', startDate:'2026-08-01', endDate:'2026-08-31', entries:[] },
+    {
+      label:'2026年9月', startDate:'2026-09-01', endDate:'2026-09-30',
+      entries:[
+        { business_key:'north-star-beans', data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' },
+        { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' }
+      ]
+    }
+  ]);
+  assert.match(context.body, /データ未登録の月: 2026年7月、2026年8月/);
+  assert.match(context.body, /2026年9月/);
+  assert.match(context.body, /登録済み日は2日/);
+  assert.match(context.body, /未登録日・未登録月は0として扱わない/);
+});
+
+test('Phase 6.17 isolates multi-month trend analysis from unrelated context', () => {
+  const period = { category:'経営数値', title:'複数月の経営推移', body:'確認済みデータのみ', source:'本人確認済み経営数値' };
+  const scoped = scopeManagementAnalysisInputs({
+    query:{ businessKey:'north-star-beans', metricType:'monthly_period_analysis', months:[] },
+    history:[{ role:'user', content:'毎月26営業日として計算して' }],
+    knowledge:[{ category:'目標', title:'月商目標', body:'300万円' }],
+    context:period
+  });
+  assert.deepEqual(scoped.history, []);
+  assert.deepEqual(scoped.knowledge, [period]);
 });
