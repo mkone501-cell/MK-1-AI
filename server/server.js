@@ -21,7 +21,7 @@ const { proposeMemory } = require('./knowledge/update-candidates');
 const { detectManagementDataCandidate, detectManagementDataCandidates } = require('./management-data/candidates');
 const { PostgresManagementDataRepository } = require('./management-data/postgres-management-data-repository');
 const { migrateManagementData } = require('./management-data/migrate-management-data');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext } = require('./management-data/query');
+const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, scopeManagementAnalysisInputs } = require('./management-data/query');
 
 const ROOT = path.resolve(__dirname, '..');
 const MAX_BODY_BYTES = 32 * 1024;
@@ -352,6 +352,7 @@ function createApplication(options = {}) {
               if (!history) return respondJson(req, res, 404, { error:'会話が見つかりません。' });
             }
           } catch { logger.error('conversation.read_failed'); return respondJson(req, res, 503, { error:'会話を取得できませんでした。' }); }
+          let replyHistory = history;
           let selectedKnowledge = [];
           if (knowledge) {
             try {
@@ -371,7 +372,13 @@ function createApplication(options = {}) {
                 if (managementQuery.metricType === 'daily_summary' || managementQuery.metricType === 'daily_analysis') {
                   const entries = await managementData.findDaily(auth.ownerEmail, managementQuery);
                   const context = managementDataSummaryContext(entries);
-                  if (context) selectedKnowledge = [...selectedKnowledge, context];
+                  if (managementQuery.metricType === 'daily_analysis') {
+                    const scoped = scopeManagementAnalysisInputs({ query:managementQuery, history:replyHistory, knowledge:selectedKnowledge, context });
+                    replyHistory = scoped.history;
+                    selectedKnowledge = scoped.knowledge;
+                  } else if (context) {
+                    selectedKnowledge = [...selectedKnowledge, context];
+                  }
                 } else {
                   const entry = await managementData.findExact(auth.ownerEmail, managementQuery);
                   const context = managementDataContext(entry);
@@ -383,7 +390,7 @@ function createApplication(options = {}) {
               }
             }
           }
-          const result = await mirai.reply({ message, history, knowledge:selectedKnowledge });
+          const result = await mirai.reply({ message, history:replyHistory, knowledge:selectedKnowledge });
           if (typeof result.answer !== 'string' || containsSecret(result.answer, config, req)) {
             logger.error('conversation.answer_rejected');
             return respondJson(req, res, 502, { error:'ミライの回答を安全に保存できませんでした。' });
