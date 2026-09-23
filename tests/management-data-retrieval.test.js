@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, scopeManagementAnalysisInputs, parseBusinessAndDates } = require('../server/management-data/query');
+const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataPeriodContext, scopeManagementAnalysisInputs, parseBusinessAndDates } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
 
 test('Phase 6.7 parses a confirmed management-data fact question', () => {
@@ -172,4 +172,52 @@ test('Phase 6.13 isolates comparison from unrelated history and general knowledg
   });
   assert.deepEqual(scoped.history, []);
   assert.deepEqual(scoped.knowledge, [comparison]);
+});
+
+
+test('Phase 6.14 parses a bounded period analysis question', () => {
+  assert.deepEqual(
+    detectManagementDataQuery('2026年9月21日から9月30日までのNORTH STAR BEANSの経営状況の推移を分析して'),
+    { businessKey:'north-star-beans', metricType:'period_analysis', startDate:'2026-09-21', endDate:'2026-09-30' }
+  );
+  assert.equal(
+    detectManagementDataQuery('2026年9月1日から10月31日までのNORTH STAR BEANSの経営状況を分析して'),
+    null
+  );
+});
+
+test('Phase 6.14 range lookup is owner, business, date-range and confirmation scoped', async () => {
+  let seen;
+  const pool = { async query(sql, params) { seen = { sql, params }; return { rows:[] }; } };
+  const repo = new PostgresManagementDataRepository(pool);
+  await repo.findRange('owner@example.com', {
+    businessKey:'north-star-beans', startDate:'2026-09-21', endDate:'2026-09-30'
+  });
+  assert.deepEqual(seen.params, ['owner@example.com', 'north-star-beans', '2026-09-21', '2026-09-30']);
+  assert.match(seen.sql, /BETWEEN \$3::date AND \$4::date/);
+  assert.match(seen.sql, /confirmed_by_owner = TRUE/);
+  assert.match(seen.sql, /DISTINCT ON \(data_date, metric_type\)/);
+});
+
+test('Phase 6.14 formats saved days without treating missing dates as zero', () => {
+  const context = managementDataPeriodContext([
+    { business_key:'north-star-beans', data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' },
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' }
+  ], '2026-09-21', '2026-09-23');
+  assert.match(context.body, /9月21日.*売上は150,000円/);
+  assert.match(context.body, /9月22日.*売上は160,000円/);
+  assert.match(context.body, /未登録日は0として扱いません/);
+  assert.doesNotMatch(context.body, /9月23日.*0円/);
+});
+
+test('Phase 6.14 isolates period analysis from unrelated history and general knowledge', () => {
+  const period = { category:'経営数値', title:'期間経営状況', body:'保存済みの日次データ', source:'本人確認済み経営数値' };
+  const scoped = scopeManagementAnalysisInputs({
+    query:{ businessKey:'north-star-beans', metricType:'period_analysis', startDate:'2026-09-21', endDate:'2026-09-30' },
+    history:[{ role:'user', content:'30席として計算して' }],
+    knowledge:[{ category:'目標', title:'月商目標', body:'300万円' }],
+    context:period
+  });
+  assert.deepEqual(scoped.history, []);
+  assert.deepEqual(scoped.knowledge, [period]);
 });
