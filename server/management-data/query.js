@@ -45,6 +45,24 @@ function parseBusinessAndDates(text) {
   return { businessKey, dataDates:[...new Set(found.map(item => item.value))] };
 }
 
+function parseBusinessAndMonthRange(text) {
+  const businessKey = /NORTH\s*STAR\s*BEANS/i.test(text) ? 'north-star-beans' : null;
+  if (!businessKey) return null;
+  const jp = text.match(/(20\d{2})年\s*(\d{1,2})月(?!\s*\d{1,2}日)/);
+  const iso = text.match(/(20\d{2})[-\/]([01]?\d)(?![-\/]\d)/);
+  const match = jp || iso;
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (month < 1 || month > 12) return null;
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return {
+    businessKey,
+    startDate:validIsoDate(year, month, 1),
+    endDate:validIsoDate(year, month, lastDay)
+  };
+}
+
 function detectManagementDataQuery(message) {
   const text = String(message || '').trim();
   if (!text) return null;
@@ -62,6 +80,13 @@ function detectManagementDataQuery(message) {
   const comparisonRequested = /比較|比べ|違い|差(?:は|を|が)?/.test(text);
   if (businessKey && comparisonRequested && dataDates.length >= 2) {
     return { businessKey, metricType:'daily_comparison', dataDates:dataDates.slice(0, 2) };
+  }
+  if (!dataDates.length) {
+    const monthRange = parseBusinessAndMonthRange(text);
+    const monthRequested = /月次|月間|経営状況|経営数値|売上|来客数|客単価|経費|利益|分析|まとめ|推移|傾向/.test(text);
+    if (monthRange && monthRequested) {
+      return { businessKey:monthRange.businessKey, metricType:'period_analysis', startDate:monthRange.startDate, endDate:monthRange.endDate };
+    }
   }
   const analysisRequested = /分析|評価|考察|どう(?:だった|でした)|良かった|悪かった/.test(text);
   const summaryRequested = /経営状況|経営数値|日次(?:の)?(?:状況|実績|まとめ)|まとめて/.test(text);
@@ -129,4 +154,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataPeriodContext, scopeManagementAnalysisInputs, parseBusinessAndDates };
+module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataPeriodContext, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonthRange };
