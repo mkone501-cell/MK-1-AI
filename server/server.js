@@ -369,7 +369,17 @@ function createApplication(options = {}) {
             const managementQuery = detectManagementDataQuery(message);
             if (managementQuery) {
               try {
-                if (managementQuery.metricType === 'daily_summary' || managementQuery.metricType === 'daily_analysis') {
+                if (managementQuery.metricType === 'daily_comparison') {
+                  const contexts = [];
+                  for (const dataDate of managementQuery.dataDates) {
+                    const entries = await managementData.findDaily(auth.ownerEmail, { businessKey:managementQuery.businessKey, dataDate });
+                    const context = managementDataSummaryContext(entries);
+                    if (context) contexts.push(context);
+                  }
+                  const scoped = scopeManagementAnalysisInputs({ query:managementQuery, history:replyHistory, knowledge:selectedKnowledge, context:contexts });
+                  replyHistory = scoped.history;
+                  selectedKnowledge = scoped.knowledge;
+                } else if (managementQuery.metricType === 'daily_summary' || managementQuery.metricType === 'daily_analysis') {
                   const entries = await managementData.findDaily(auth.ownerEmail, managementQuery);
                   const context = managementDataSummaryContext(entries);
                   if (managementQuery.metricType === 'daily_analysis') {

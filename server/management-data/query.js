@@ -1,20 +1,27 @@
 'use strict';
 
+function normalizeDateParts(year, month, day) {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function extractManagementDates(text) {
+  const dates = [];
+  const pattern = /(20\d{2})年\s*(\d{1,2})月\s*(\d{1,2})日|(20\d{2})[-\/]([01]?\d)[-\/]([0-3]?\d)/g;
+  for (const match of String(text || '').matchAll(pattern)) {
+    const year = Number(match[1] || match[4]);
+    const month = Number(match[2] || match[5]);
+    const day = Number(match[3] || match[6]);
+    const value = normalizeDateParts(year, month, day);
+    if (value && !dates.includes(value)) dates.push(value);
+  }
+  return dates;
+}
+
 function parseBusinessAndDate(text) {
   const businessKey = /NORTH\s*STAR\s*BEANS/i.test(text) ? 'north-star-beans' : null;
-  let dataDate = null;
-  const jp = text.match(/(20\d{2})年\s*(\d{1,2})月\s*(\d{1,2})日/);
-  const iso = text.match(/(20\d{2})[-\/]([01]?\d)[-\/]([0-3]?\d)/);
-  const match = jp || iso;
-  if (match) {
-    const year = Number(match[1]);
-    const month = Number(match[2]);
-    const day = Number(match[3]);
-    const date = new Date(Date.UTC(year, month - 1, day));
-    if (date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day) {
-      dataDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    }
-  }
+  const [dataDate = null] = extractManagementDates(text);
   return { businessKey, dataDate };
 }
 
@@ -22,8 +29,14 @@ function detectManagementDataQuery(message) {
   const text = String(message || '').trim();
   if (!text) return null;
   const { businessKey, dataDate } = parseBusinessAndDate(text);
+  const dates = extractManagementDates(text);
+  const comparisonRequested = /比較|比べ|違い|差/.test(text);
   const analysisRequested = /分析|評価|考察|どう(?:だった|でした)|良かった|悪かった/.test(text);
   const summaryRequested = /経営状況|経営数値|日次(?:の)?(?:状況|実績|まとめ)|まとめて/.test(text);
+  if (comparisonRequested && summaryRequested) {
+    if (!businessKey || dates.length !== 2) return null;
+    return { businessKey, metricType:'daily_comparison', dataDates:dates };
+  }
   const metricType = analysisRequested && summaryRequested ? 'daily_analysis' : summaryRequested ? 'daily_summary' : /来客数|客数|来店客数/.test(text) ? 'customers' : /客単価|平均客単価/.test(text) ? 'average_spend' : /経費|費用/.test(text) ? 'expense' : /利益|営業利益/.test(text) ? 'profit' : /売上/.test(text) ? 'revenue' : null;
   if (!businessKey || !metricType || !dataDate) return null;
   return { businessKey, metricType, dataDate };
@@ -56,10 +69,11 @@ function managementDataSummaryContext(entries) {
 function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], context = null }) {
   const safeHistory = Array.isArray(history) ? history : [];
   const safeKnowledge = Array.isArray(knowledge) ? knowledge : [];
-  if (query?.metricType === 'daily_analysis') {
-    return { history:[], knowledge:context ? [context] : [] };
+  const suppliedContexts = Array.isArray(context) ? context.filter(Boolean) : context ? [context] : [];
+  if (query?.metricType === 'daily_analysis' || query?.metricType === 'daily_comparison') {
+    return { history:[], knowledge:suppliedContexts };
   }
-  return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
+  return { history:safeHistory, knowledge:suppliedContexts.length ? [...safeKnowledge, ...suppliedContexts] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, scopeManagementAnalysisInputs };
+module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, scopeManagementAnalysisInputs, extractManagementDates };
