@@ -52,4 +52,14 @@ function managementDataSummaryContext(entries) {
   return { category:'経営数値', title:`日次経営状況 ${year}/${month}/${day}`, body:`${Number(month)}月${Number(day)}日の${businessName}の本人確認済み経営数値: ${contexts.map(item => item.body.replace(/^.*?のNORTH STAR BEANSの/, '')).join('、')}`, source:'本人確認済み経営数値' };
 }
 
-module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext };
+
+function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], context = null }) {
+  const safeHistory = Array.isArray(history) ? history : [];
+  const safeKnowledge = Array.isArray(knowledge) ? knowledge : [];
+  if (query?.metricType === 'daily_analysis') {
+    return { history:[], knowledge:context ? [context] : [] };
+  }
+  return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
+}
+
+module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, scopeManagementAnalysisInputs };
