@@ -21,7 +21,7 @@ const { proposeMemory } = require('./knowledge/update-candidates');
 const { detectManagementDataCandidate, detectManagementDataCandidates } = require('./management-data/candidates');
 const { PostgresManagementDataRepository } = require('./management-data/postgres-management-data-repository');
 const { migrateManagementData } = require('./management-data/migrate-management-data');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataMultiMonthContext, managementDataPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
+const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
 
 const ROOT = path.resolve(__dirname, '..');
 const MAX_BODY_BYTES = 32 * 1024;
@@ -369,7 +369,19 @@ function createApplication(options = {}) {
             const managementQuery = detectManagementDataQuery(message);
             if (managementQuery) {
               try {
-                if (managementQuery.metricType === 'monthly_period_analysis') {
+                if (managementQuery.metricType === 'annual_comparison') {
+                  const groups = [];
+                  for (const year of managementQuery.years) {
+                    groups.push({
+                      ...year,
+                      entries:await managementData.findRange(auth.ownerEmail, { businessKey:managementQuery.businessKey, startDate:year.startDate, endDate:year.endDate })
+                    });
+                  }
+                  const context = managementDataAnnualComparisonContext(groups);
+                  const scoped = scopeManagementAnalysisInputs({ query:managementQuery, history:replyHistory, knowledge:selectedKnowledge, context });
+                  replyHistory = scoped.history;
+                  selectedKnowledge = scoped.knowledge;
+                } else if (managementQuery.metricType === 'monthly_period_analysis') {
                   const groups = [];
                   for (const month of managementQuery.months) {
                     groups.push({
