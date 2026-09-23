@@ -207,6 +207,9 @@ test('Phase 6.14 formats saved days without treating missing dates as zero', () 
   assert.match(context.body, /9月21日.*売上は150,000円/);
   assert.match(context.body, /9月22日.*売上は160,000円/);
   assert.match(context.body, /未登録日は0として扱いません/);
+  assert.match(context.body, /登録済み日は2日/);
+  assert.match(context.body, /登録済み2日平均/);
+  assert.match(context.body, /指定期間の全日数を分母にした平均として表現しない/);
   assert.doesNotMatch(context.body, /9月23日.*0円/);
 });
 

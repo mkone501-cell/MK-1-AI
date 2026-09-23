@@ -105,7 +105,7 @@ function managementDataPeriodContext(entries, startDate, endDate) {
   }
   const summaries = [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, items]) => managementDataSummaryContext(items)).filter(Boolean);
   const body = summaries.length
-    ? `${startDate}から${endDate}までの期間で、本人確認済み経営数値が保存されている日だけを列挙します（未登録日は0として扱いません）。\n${summaries.map(item => item.body).join('\n')}`
+    ? `${startDate}から${endDate}までの期間で、本人確認済み経営数値が保存されている日だけを列挙します（未登録日は0として扱いません）。登録済み日は${summaries.length}日です。合計・平均を計算する場合は登録済み日だけを対象にし、「登録済み${summaries.length}日間の合計」「登録済み${summaries.length}日平均」と明記してください。指定期間の全日数を分母にした平均として表現しないでください。\n${summaries.map(item => item.body).join('\n')}`
     : `${startDate}から${endDate}までの期間に、本人確認済み経営数値はありません。`;
   return { category:'経営数値', title:`期間経営状況 ${startDate}〜${endDate}`, body, source:'本人確認済み経営数値' };
 }
