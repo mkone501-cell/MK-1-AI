@@ -124,6 +124,23 @@ function parseBusinessAndYears(text) {
   return { businessKey, years };
 }
 
+function enumerateYearRanges(first, last, maxYears = 5) {
+  if (!first || !last || !Number.isInteger(first.year) || !Number.isInteger(last.year)) return [];
+  if (last.year < first.year) return [];
+  const count = last.year - first.year + 1;
+  if (count < 1 || count > maxYears) return [];
+  const years = [];
+  for (let year = first.year; year <= last.year; year += 1) {
+    years.push({
+      year,
+      startDate:validIsoDate(year, 1, 1),
+      endDate:validIsoDate(year, 12, 31),
+      label:`${year}年`
+    });
+  }
+  return years;
+}
+
 function parseBusinessAndYearMonths(text) {
   const businessKey = /NORTH\s*STAR\s*BEANS/i.test(text) ? 'north-star-beans' : null;
   if (!businessKey) return null;
@@ -182,6 +199,11 @@ function detectManagementDataQuery(message) {
     const yearCompare = parseBusinessAndYears(text);
     if (comparisonRequested && yearCompare.years.length >= 2) {
       return { businessKey:yearCompare.businessKey, metricType:'annual_comparison', years:yearCompare.years.slice(0, 2) };
+    }
+    if (rangeRequested && yearCompare.years.length >= 2) {
+      const years = enumerateYearRanges(yearCompare.years[0], yearCompare.years[1], 5);
+      if (!years.length) return null;
+      return { businessKey:yearCompare.businessKey, metricType:'annual_period_analysis', years };
     }
     const yearParse = parseBusinessAndYearMonths(text);
     const yearRequested = /年間|年次|経営状況|経営数値|売上|来客数|客単価|経費|利益|分析|まとめ|推移|傾向/.test(text);
@@ -253,6 +275,23 @@ function managementDataMultiMonthContext(groups) {
   return { category:'経営数値', title:'複数月の経営推移', body, source:'本人確認済み経営数値' };
 }
 
+function managementDataMultiYearContext(groups) {
+  const items = (Array.isArray(groups) ? groups : []).map(group => ({
+    label:group?.label || `${group?.startDate}〜${group?.endDate}`,
+    context:managementDataPeriodContext(group?.entries || [], group?.startDate, group?.endDate)
+  }));
+  if (!items.length) return null;
+  const available = items.filter(item => item.context && !/経営数値はありません/.test(item.context.body));
+  const missing = items.filter(item => !item.context || /経営数値はありません/.test(item.context.body)).map(item => item.label);
+  const body = [
+    '本人確認済み経営数値だけで年ごとの推移を分析してください。未登録日・未登録年は0として扱わないでください。',
+    '年ごとの登録済み日数が違う場合は、単純な年間合計だけで増減や良し悪しを断定しないでください。',
+    missing.length ? `データ未登録の年: ${missing.join('、')}` : '',
+    ...available.map(item => `${item.label}:\n${item.context.body}`)
+  ].filter(Boolean).join('\n');
+  return { category:'経営数値', title:'複数年の経営推移', body, source:'本人確認済み経営数値' };
+}
+
 function managementDataAnnualComparisonContext(groups) {
   const items = (Array.isArray(groups) ? groups : []).map(group => ({
     label:group?.label || `${group?.startDate}〜${group?.endDate}`,
@@ -297,10 +336,10 @@ function managementDataComparisonContext(groups) {
 function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], context = null }) {
   const safeHistory = Array.isArray(history) ? history : [];
   const safeKnowledge = Array.isArray(knowledge) ? knowledge : [];
-  if (query?.metricType === 'daily_analysis' || query?.metricType === 'daily_comparison' || query?.metricType === 'period_analysis' || query?.metricType === 'monthly_comparison' || query?.metricType === 'monthly_period_analysis' || query?.metricType === 'annual_comparison') {
+  if (query?.metricType === 'daily_analysis' || query?.metricType === 'daily_comparison' || query?.metricType === 'period_analysis' || query?.metricType === 'monthly_comparison' || query?.metricType === 'monthly_period_analysis' || query?.metricType === 'annual_comparison' || query?.metricType === 'annual_period_analysis') {
     return { history:[], knowledge:context ? [context] : [] };
   }
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataPeriodContext, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges };
+module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
