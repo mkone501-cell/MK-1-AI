@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, scopeManagementAnalysisInputs } = require('../server/management-data/query');
+const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, scopeManagementAnalysisInputs, extractManagementDates } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
 
 test('Phase 6.7 parses a confirmed management-data fact question', () => {
@@ -131,4 +131,45 @@ test('Phase 6.12 fix keeps normal daily summary context behavior', () => {
   });
   assert.deepEqual(scoped.history, history);
   assert.deepEqual(scoped.knowledge, [...knowledge, dailyContext]);
+});
+
+
+test('Phase 6.13 extracts two explicit management dates safely', () => {
+  assert.deepEqual(
+    extractManagementDates('2026年9月21日と2026年9月22日'),
+    ['2026-09-21', '2026-09-22']
+  );
+  assert.deepEqual(
+    extractManagementDates('2026-09-21 と 2026/09/22'),
+    ['2026-09-21', '2026-09-22']
+  );
+});
+
+test('Phase 6.13 parses a two-day daily management comparison', () => {
+  assert.deepEqual(
+    detectManagementDataQuery('2026年9月21日と2026年9月22日のNORTH STAR BEANSの経営状況を比較して'),
+    { businessKey:'north-star-beans', metricType:'daily_comparison', dataDates:['2026-09-21', '2026-09-22'] }
+  );
+});
+
+test('Phase 6.13 rejects ambiguous daily comparison date counts', () => {
+  assert.equal(
+    detectManagementDataQuery('2026年9月20日、2026年9月21日、2026年9月22日のNORTH STAR BEANSの経営状況を比較して'),
+    null
+  );
+});
+
+test('Phase 6.13 isolates two-day comparison from unrelated history and general knowledge', () => {
+  const contexts = [
+    { category:'経営数値', title:'日次経営状況 2026/09/21', body:'売上150,000円、来客数75人、客単価2,000円', source:'本人確認済み経営数値' },
+    { category:'経営数値', title:'日次経営状況 2026/09/22', body:'売上160,000円、来客数80人、客単価2,000円', source:'本人確認済み経営数値' }
+  ];
+  const scoped = scopeManagementAnalysisInputs({
+    query:{ businessKey:'north-star-beans', metricType:'daily_comparison', dataDates:['2026-09-21','2026-09-22'] },
+    history:[{ role:'user', content:'営業時間は6時間と仮定して' }],
+    knowledge:[{ category:'店舗', title:'座席数', body:'30席' }, { category:'目標', title:'月商目標', body:'300万円' }],
+    context:contexts
+  });
+  assert.deepEqual(scoped.history, []);
+  assert.deepEqual(scoped.knowledge, contexts);
 });
