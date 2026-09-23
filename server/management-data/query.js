@@ -104,6 +104,17 @@ function enumerateMonthRanges(first, last, maxMonths = 12) {
   return result;
 }
 
+function parseBusinessAndYearMonths(text) {
+  const businessKey = /NORTH\s*STAR\s*BEANS/i.test(text) ? 'north-star-beans' : null;
+  if (!businessKey) return null;
+  const match = text.match(/(20\d{2})年(?!\s*\d{1,2}月)/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const months = enumerateMonthRanges({ year, month:1 }, { year, month:12 }, 12);
+  if (months.length !== 12) return null;
+  return { businessKey, year, months };
+}
+
 function parseBusinessAndMonthRange(text) {
   const { businessKey, months } = parseBusinessAndMonths(text);
   if (!businessKey || !months.length) return null;
@@ -147,6 +158,11 @@ function detectManagementDataQuery(message) {
     const monthRequested = /月次|月間|経営状況|経営数値|売上|来客数|客単価|経費|利益|分析|まとめ|推移|傾向/.test(text);
     if (monthRange && monthRequested) {
       return { businessKey:monthRange.businessKey, metricType:'period_analysis', startDate:monthRange.startDate, endDate:monthRange.endDate };
+    }
+    const yearParse = parseBusinessAndYearMonths(text);
+    const yearRequested = /年間|年次|経営状況|経営数値|売上|来客数|客単価|経費|利益|分析|まとめ|推移|傾向/.test(text);
+    if (yearParse && yearRequested) {
+      return { businessKey:yearParse.businessKey, metricType:'monthly_period_analysis', months:yearParse.months };
     }
   }
   const analysisRequested = /分析|評価|考察|どう(?:だった|でした)|良かった|悪かった/.test(text);
@@ -246,4 +262,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataMultiMonthContext, managementDataPeriodContext, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, enumerateMonthRanges };
+module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataMultiMonthContext, managementDataPeriodContext, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, enumerateMonthRanges };
