@@ -344,6 +344,46 @@ function managementDataPeriodCompleteness(entries) {
   });
 }
 
+function managementDataConsistencyChecks(entries) {
+  const rows = (Array.isArray(entries) ? entries : []).filter(entry =>
+    entry?.metric_type && Number.isFinite(Number(entry?.amount))
+  );
+  if (!rows.length) return [];
+  const byDate = new Map();
+  for (const entry of rows) {
+    const rawDate = entry?.data_date instanceof Date
+      ? entry.data_date.toISOString().slice(0, 10)
+      : String(entry?.data_date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) continue;
+    if (!byDate.has(rawDate)) byDate.set(rawDate, new Map());
+    byDate.get(rawDate).set(entry.metric_type, entry);
+  }
+  const yen = value => `${Number(value).toLocaleString('ja-JP')}円`;
+  const lines = [];
+  for (const [date, metrics] of [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    const revenue = metrics.get('revenue');
+    const customers = metrics.get('customers');
+    const averageSpend = metrics.get('average_spend');
+    if (revenue && customers && averageSpend) {
+      const expected = Number(customers.amount) * Number(averageSpend.amount);
+      const actual = Number(revenue.amount);
+      const diff = actual - expected;
+      const status = diff === 0 ? '一致' : `差${diff > 0 ? '+' : ''}${yen(diff)}`;
+      lines.push(`${date} 売上整合性: ${Number(customers.amount).toLocaleString('ja-JP')}人 × ${yen(Number(averageSpend.amount))} = ${yen(expected)}、登録売上${yen(actual)}（${status}）`);
+    }
+    const expense = metrics.get('expense');
+    const profit = metrics.get('profit');
+    if (revenue && expense && profit) {
+      const expected = Number(revenue.amount) - Number(expense.amount);
+      const actual = Number(profit.amount);
+      const diff = actual - expected;
+      const status = diff === 0 ? '一致' : `差${diff > 0 ? '+' : ''}${yen(diff)}`;
+      lines.push(`${date} 利益整合性: 売上${yen(Number(revenue.amount))} - 経費${yen(Number(expense.amount))} = ${yen(expected)}、登録利益${yen(actual)}（${status}）`);
+    }
+  }
+  return lines;
+}
+
 function managementDataPeriodContext(entries, startDate, endDate) {
   const rows = Array.isArray(entries) ? entries : [];
   const groups = new Map();
@@ -357,8 +397,9 @@ function managementDataPeriodContext(entries, startDate, endDate) {
   const aggregates = managementDataPeriodAggregates(rows);
   const trends = managementDataPeriodTrendMetrics(rows);
   const completeness = managementDataPeriodCompleteness(rows);
+  const consistency = managementDataConsistencyChecks(rows);
   const body = summaries.length
-    ? `${startDate}から${endDate}までの期間で、本人確認済み経営数値が保存されている日だけを列挙します（未登録日は0として扱いません）。登録済み日は${summaries.length}日です。合計・平均・期間内の最初と最後の登録値の差分はサーバー側で計算済みの値を優先して使用し、指定期間の全日数を分母にした平均として表現しないでください。ユーザーが明示的に仮定計算を求めていない限り、不足している指標を別日の値や推測値で補完して試算しないでください。\nデータ登録状況（指標ごとの登録日数。未登録日は0値ではありません）:\n${completeness.join('\n')}\nサーバー計算済み集計（再計算せずこの値を使用）:\n${aggregates.length ? aggregates.join('\n') : '集計対象の指標はありません。'}\nサーバー計算済み期間内差分（再計算せずこの値を使用）:\n${trends.length ? trends.join('\n') : '2日以上登録されている同一指標はありません。'}\n日別の確認済みデータ:\n${summaries.map(item => item.body).join('\n')}`
+    ? `${startDate}から${endDate}までの期間で、本人確認済み経営数値が保存されている日だけを列挙します（未登録日は0として扱いません）。登録済み日は${summaries.length}日です。合計・平均・期間内の最初と最後の登録値の差分はサーバー側で計算済みの値を優先して使用し、指定期間の全日数を分母にした平均として表現しないでください。ユーザーが明示的に仮定計算を求めていない限り、不足している指標を別日の値や推測値で補完して試算しないでください。\nデータ登録状況（指標ごとの登録日数。未登録日は0値ではありません）:\n${completeness.join('\n')}\nサーバー計算済み集計（再計算せずこの値を使用）:\n${aggregates.length ? aggregates.join('\n') : '集計対象の指標はありません。'}\nサーバー計算済み期間内差分（再計算せずこの値を使用）:\n${trends.length ? trends.join('\n') : '2日以上登録されている同一指標はありません。'}\nサーバー計算済み整合性確認（再計算せずこの値を使用）:\n${consistency.length ? consistency.join('\n') : '整合性確認に必要な指標の組み合わせはありません。'}\n日別の確認済みデータ:\n${summaries.map(item => item.body).join('\n')}`
     : `${startDate}から${endDate}までの期間に、本人確認済み経営数値はありません。`;
   return { category:'経営数値', title:`期間経営状況 ${startDate}〜${endDate}`, body, source:'本人確認済み経営数値' };
 }
@@ -483,4 +524,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
+const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
 
 test('Phase 6.7 parses a confirmed management-data fact question', () => {
@@ -692,4 +692,49 @@ test('Phase 6.24 period context exposes metric coverage before aggregates', () =
   assert.match(context.body, /売上: 登録2日/);
   assert.match(context.body, /来客数: 登録1日/);
   assert.match(context.body, /客単価: 登録0日/);
+});
+
+
+test('Phase 6.25 checks revenue against customers times average spend deterministically', () => {
+  const lines = managementDataConsistencyChecks([
+    { data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' },
+    { data_date:'2026-09-22', metric_type:'customers', amount:'80', currency:'COUNT' },
+    { data_date:'2026-09-22', metric_type:'average_spend', amount:'2000', currency:'JPY' }
+  ]);
+  assert.ok(lines.includes('2026-09-22 売上整合性: 80人 × 2,000円 = 160,000円、登録売上160,000円（一致）'));
+});
+
+test('Phase 6.25 reports a numeric gap instead of declaring inconsistent data invalid', () => {
+  const lines = managementDataConsistencyChecks([
+    { data_date:'2026-09-22', metric_type:'revenue', amount:'159000', currency:'JPY' },
+    { data_date:'2026-09-22', metric_type:'customers', amount:'80', currency:'COUNT' },
+    { data_date:'2026-09-22', metric_type:'average_spend', amount:'2000', currency:'JPY' }
+  ]);
+  assert.match(lines[0], /登録売上159,000円（差-1,000円）/);
+});
+
+test('Phase 6.25 checks profit against revenue minus expense when all three exist', () => {
+  const lines = managementDataConsistencyChecks([
+    { data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' },
+    { data_date:'2026-09-22', metric_type:'expense', amount:'90000', currency:'JPY' },
+    { data_date:'2026-09-22', metric_type:'profit', amount:'70000', currency:'JPY' }
+  ]);
+  assert.ok(lines.includes('2026-09-22 利益整合性: 売上160,000円 - 経費90,000円 = 70,000円、登録利益70,000円（一致）'));
+});
+
+test('Phase 6.25 skips consistency checks when required metrics are missing', () => {
+  const lines = managementDataConsistencyChecks([
+    { data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' }
+  ]);
+  assert.deepEqual(lines, []);
+});
+
+test('Phase 6.25 period context includes server-calculated consistency checks', () => {
+  const context = managementDataPeriodContext([
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' },
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'customers', amount:'80', currency:'COUNT' },
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'average_spend', amount:'2000', currency:'JPY' }
+  ], '2026-09-01', '2026-09-30');
+  assert.match(context.body, /サーバー計算済み整合性確認（再計算せずこの値を使用）/);
+  assert.match(context.body, /80人 × 2,000円 = 160,000円、登録売上160,000円（一致）/);
 });
