@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
+const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
 
 test('Phase 6.7 parses a confirmed management-data fact question', () => {
@@ -566,4 +566,58 @@ test('Phase 6.21 fix tells analysis not to fill missing metrics with another day
   ], '2026-09-01', '2026-09-30');
   assert.match(context.body, /明示的に仮定計算を求めていない限り/);
   assert.match(context.body, /不足している指標を別日の値や推測値で補完して試算しない/);
+});
+
+
+test('Phase 6.22 computes daily comparison differences deterministically', () => {
+  const lines = managementDataComparisonMetrics([
+    { dataDate:'2026-09-21', entries:[
+      { metric_type:'revenue', amount:'150000', currency:'JPY' },
+      { metric_type:'customers', amount:'75', currency:'COUNT' }
+    ] },
+    { dataDate:'2026-09-22', entries:[
+      { metric_type:'revenue', amount:'160000', currency:'JPY' },
+      { metric_type:'customers', amount:'80', currency:'COUNT' }
+    ] }
+  ]);
+  assert.ok(lines.includes('売上: 2026-09-21の150,000円 → 2026-09-22の160,000円、差+10,000円、増減率+6.67%'));
+  assert.ok(lines.includes('来客数: 2026-09-21の75人 → 2026-09-22の80人、差+5人、増減率+6.67%'));
+});
+
+test('Phase 6.22 skips metrics missing on either comparison day', () => {
+  const lines = managementDataComparisonMetrics([
+    { dataDate:'2026-09-21', entries:[
+      { metric_type:'revenue', amount:'150000', currency:'JPY' }
+    ] },
+    { dataDate:'2026-09-22', entries:[
+      { metric_type:'revenue', amount:'160000', currency:'JPY' },
+      { metric_type:'average_spend', amount:'2000', currency:'JPY' }
+    ] }
+  ]);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /^売上:/);
+  assert.equal(lines.some(line => /客単価/.test(line)), false);
+});
+
+test('Phase 6.22 handles a zero comparison base without inventing a percentage', () => {
+  const lines = managementDataComparisonMetrics([
+    { dataDate:'2026-09-21', entries:[{ metric_type:'revenue', amount:'0', currency:'JPY' }] },
+    { dataDate:'2026-09-22', entries:[{ metric_type:'revenue', amount:'10000', currency:'JPY' }] }
+  ]);
+  assert.match(lines[0], /差\+10,000円/);
+  assert.match(lines[0], /増減率は基準値0のため算出不可/);
+});
+
+test('Phase 6.22 daily comparison context includes server-calculated delta before facts', () => {
+  const context = managementDataComparisonContext([
+    { dataDate:'2026-09-21', entries:[
+      { business_key:'north-star-beans', data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' }
+    ] },
+    { dataDate:'2026-09-22', entries:[
+      { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' }
+    ] }
+  ]);
+  assert.match(context.body, /サーバー計算済み差分（再計算せずこの値を使用）/);
+  assert.match(context.body, /差\+10,000円、増減率\+6.67%/);
+  assert.match(context.body, /日別の本人確認済みデータ/);
 });
