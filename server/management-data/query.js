@@ -293,7 +293,7 @@ function managementDataPeriodContext(entries, startDate, endDate) {
   const summaries = [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, items]) => managementDataSummaryContext(items)).filter(Boolean);
   const aggregates = managementDataPeriodAggregates(rows);
   const body = summaries.length
-    ? `${startDate}から${endDate}までの期間で、本人確認済み経営数値が保存されている日だけを列挙します（未登録日は0として扱いません）。登録済み日は${summaries.length}日です。合計・平均はサーバー側で計算済みの値を優先して使用し、指定期間の全日数を分母にした平均として表現しないでください。\nサーバー計算済み集計（再計算せずこの値を使用）:\n${aggregates.length ? aggregates.join('\n') : '集計対象の指標はありません。'}\n日別の確認済みデータ:\n${summaries.map(item => item.body).join('\n')}`
+    ? `${startDate}から${endDate}までの期間で、本人確認済み経営数値が保存されている日だけを列挙します（未登録日は0として扱いません）。登録済み日は${summaries.length}日です。合計・平均はサーバー側で計算済みの値を優先して使用し、指定期間の全日数を分母にした平均として表現しないでください。ユーザーが明示的に仮定計算を求めていない限り、不足している指標を別日の値や推測値で補完して試算しないでください。\nサーバー計算済み集計（再計算せずこの値を使用）:\n${aggregates.length ? aggregates.join('\n') : '集計対象の指標はありません。'}\n日別の確認済みデータ:\n${summaries.map(item => item.body).join('\n')}`
     : `${startDate}から${endDate}までの期間に、本人確認済み経営数値はありません。`;
   return { category:'経営数値', title:`期間経営状況 ${startDate}〜${endDate}`, body, source:'本人確認済み経営数値' };
 }
