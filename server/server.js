@@ -434,7 +434,9 @@ function createApplication(options = {}) {
                   selectedKnowledge = scoped.knowledge;
                 } else if (managementQuery.metricType === 'daily_summary' || managementQuery.metricType === 'daily_analysis') {
                   const entries = await managementData.findDaily(auth.ownerEmail, managementQuery);
-                  const context = managementDataSummaryContext(entries);
+                  const context = managementQuery.metricType === 'daily_analysis'
+                    ? managementDataPeriodContext(entries, managementQuery.dataDate, managementQuery.dataDate)
+                    : managementDataSummaryContext(entries);
                   if (managementQuery.metricType === 'daily_analysis') {
                     const scoped = scopeManagementAnalysisInputs({ query:managementQuery, history:replyHistory, knowledge:selectedKnowledge, context });
                     replyHistory = scoped.history;
