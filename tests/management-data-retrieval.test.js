@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
+const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
 
 test('Phase 6.7 parses a confirmed management-data fact question', () => {
@@ -521,4 +521,39 @@ test('Phase 6.20 isolates multi-year trend analysis from unrelated context', () 
   });
   assert.deepEqual(scoped.history, []);
   assert.deepEqual(scoped.knowledge, [period]);
+});
+
+
+test('Phase 6.21 computes additive period metrics deterministically', () => {
+  const lines = managementDataPeriodAggregates([
+    { data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' },
+    { data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' },
+    { data_date:'2026-09-22', metric_type:'customers', amount:'80', currency:'COUNT' }
+  ]);
+  assert.ok(lines.includes('売上: 登録済み2日分の合計310,000円、登録済み2日平均155,000円'));
+  assert.ok(lines.includes('来客数: 登録済み1日分の合計80人、登録済み1日平均80人'));
+});
+
+test('Phase 6.21 averages average-spend and keeps cash balance as latest value', () => {
+  const lines = managementDataPeriodAggregates([
+    { data_date:'2026-09-21', metric_type:'average_spend', amount:'1800', currency:'JPY' },
+    { data_date:'2026-09-22', metric_type:'average_spend', amount:'2000', currency:'JPY' },
+    { data_date:'2026-09-21', metric_type:'cash_balance', amount:'900000', currency:'JPY' },
+    { data_date:'2026-09-22', metric_type:'cash_balance', amount:'950000', currency:'JPY' }
+  ]);
+  assert.ok(lines.includes('客単価: 登録済み2日平均1,900円'));
+  assert.ok(lines.includes('現金残高: 最新の登録値950,000円'));
+  assert.equal(lines.some(line => /客単価.*合計/.test(line)), false);
+  assert.equal(lines.some(line => /現金残高.*合計/.test(line)), false);
+});
+
+test('Phase 6.21 period context includes server-calculated aggregates before daily facts', () => {
+  const context = managementDataPeriodContext([
+    { business_key:'north-star-beans', data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' },
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' }
+  ], '2026-09-01', '2026-09-30');
+  assert.match(context.body, /サーバー計算済み集計（再計算せずこの値を使用）/);
+  assert.match(context.body, /売上: 登録済み2日分の合計310,000円、登録済み2日平均155,000円/);
+  assert.match(context.body, /日別の確認済みデータ/);
+  assert.doesNotMatch(context.body, /指定期間の全日数を分母にした平均として表現しないでください。\n9月21日/);
 });
