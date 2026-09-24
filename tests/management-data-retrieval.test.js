@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
+const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
 
 test('Phase 6.7 parses a confirmed management-data fact question', () => {
@@ -657,4 +657,39 @@ test('Phase 6.23 handles zero first value without fabricating a rate', () => {
   ]);
   assert.match(lines[0], /差\+10,000円/);
   assert.match(lines[0], /増減率は基準値0のため算出不可/);
+});
+
+
+test('Phase 6.24 counts registered days by metric without treating missing days as zero', () => {
+  const lines = managementDataPeriodCompleteness([
+    { data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' },
+    { data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' },
+    { data_date:'2026-09-22', metric_type:'customers', amount:'80', currency:'COUNT' },
+    { data_date:'2026-09-22', metric_type:'average_spend', amount:'2000', currency:'JPY' }
+  ]);
+  assert.ok(lines.includes('売上: 登録2日（2026-09-21〜2026-09-22）'));
+  assert.ok(lines.includes('来客数: 登録1日（2026-09-22）'));
+  assert.ok(lines.includes('客単価: 登録1日（2026-09-22）'));
+  assert.ok(lines.includes('経費: 登録0日'));
+  assert.ok(lines.includes('利益: 登録0日'));
+});
+
+test('Phase 6.24 de-duplicates multiple metrics rows from the same day when counting coverage', () => {
+  const lines = managementDataPeriodCompleteness([
+    { data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' },
+    { data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' }
+  ]);
+  assert.ok(lines.includes('売上: 登録1日（2026-09-22）'));
+});
+
+test('Phase 6.24 period context exposes metric coverage before aggregates', () => {
+  const context = managementDataPeriodContext([
+    { business_key:'north-star-beans', data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' },
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' },
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'customers', amount:'80', currency:'COUNT' }
+  ], '2026-09-01', '2026-09-30');
+  assert.match(context.body, /データ登録状況（指標ごとの登録日数。未登録日は0値ではありません）/);
+  assert.match(context.body, /売上: 登録2日/);
+  assert.match(context.body, /来客数: 登録1日/);
+  assert.match(context.body, /客単価: 登録0日/);
 });
