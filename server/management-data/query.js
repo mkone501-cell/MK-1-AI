@@ -363,13 +363,49 @@ function managementDataMonthlyComparisonContext(groups) {
   };
 }
 
+function managementDataComparisonMetrics(groups) {
+  const source = Array.isArray(groups) ? groups.slice(0, 2) : [];
+  if (source.length < 2) return [];
+  const [left, right] = source;
+  const leftByMetric = new Map((left?.entries || []).filter(Boolean).map(entry => [entry.metric_type, entry]));
+  const rightByMetric = new Map((right?.entries || []).filter(Boolean).map(entry => [entry.metric_type, entry]));
+  const names = { revenue:'売上', expense:'経費', profit:'利益', customers:'来客数', average_spend:'客単価', cash_balance:'現金残高' };
+  const formatValue = (value, currency, signed = false) => {
+    const rounded = Number.isInteger(value) ? value : Number(value.toFixed(2));
+    const sign = signed && rounded > 0 ? '+' : '';
+    const unit = currency === 'JPY' ? '円' : currency === 'COUNT' ? '人' : currency ? ` ${currency}` : '';
+    return `${sign}${rounded.toLocaleString('ja-JP')}${unit}`;
+  };
+  const lines = [];
+  for (const [metricType, before] of leftByMetric.entries()) {
+    const after = rightByMetric.get(metricType);
+    if (!after) continue;
+    if (before.currency !== after.currency) continue;
+    const beforeValue = Number(before.amount);
+    const afterValue = Number(after.amount);
+    if (!Number.isFinite(beforeValue) || !Number.isFinite(afterValue)) continue;
+    const diff = afterValue - beforeValue;
+    const rate = beforeValue === 0 ? null : diff / beforeValue * 100;
+    const name = names[metricType] || metricType;
+    const rateText = rate === null ? '増減率は基準値0のため算出不可' : `増減率${rate > 0 ? '+' : ''}${Number(rate.toFixed(2)).toLocaleString('ja-JP')}%`;
+    lines.push(`${name}: ${left.dataDate}の${formatValue(beforeValue, before.currency)} → ${right.dataDate}の${formatValue(afterValue, after.currency)}、差${formatValue(diff, after.currency, true)}、${rateText}`);
+  }
+  return lines;
+}
+
 function managementDataComparisonContext(groups) {
-  const items = (Array.isArray(groups) ? groups : []).map(group => ({
+  const safeGroups = Array.isArray(groups) ? groups : [];
+  const items = safeGroups.map(group => ({
     dataDate:group?.dataDate,
     context:managementDataSummaryContext(group?.entries || [])
   })).filter(item => item.dataDate);
   if (!items.length) return null;
-  const body = items.map(item => item.context ? item.context.body : `${item.dataDate}の本人確認済み経営数値はありません。`).join('\n');
+  const comparisons = managementDataComparisonMetrics(safeGroups);
+  const body = [
+    comparisons.length ? `サーバー計算済み差分（再計算せずこの値を使用）:\n${comparisons.join('\n')}` : '',
+    '日別の本人確認済みデータ:',
+    items.map(item => item.context ? item.context.body : `${item.dataDate}の本人確認済み経営数値はありません。`).join('\n')
+  ].filter(Boolean).join('\n');
   return { category:'経営数値', title:'日次経営状況の比較', body, source:'本人確認済み経営数値' };
 }
 
@@ -382,4 +418,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
