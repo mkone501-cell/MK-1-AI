@@ -316,6 +316,34 @@ function managementDataPeriodTrendMetrics(entries) {
   return lines;
 }
 
+function managementDataPeriodCompleteness(entries) {
+  const rows = (Array.isArray(entries) ? entries : []).filter(entry => entry?.metric_type);
+  const metricNames = {
+    revenue:'売上',
+    customers:'来客数',
+    average_spend:'客単価',
+    expense:'経費',
+    profit:'利益',
+    cash_balance:'現金残高'
+  };
+  const order = ['revenue','customers','average_spend','expense','profit','cash_balance'];
+  const datesByMetric = new Map(order.map(metric => [metric, new Set()]));
+  for (const entry of rows) {
+    if (!datesByMetric.has(entry.metric_type)) datesByMetric.set(entry.metric_type, new Set());
+    const rawDate = entry?.data_date instanceof Date
+      ? entry.data_date.toISOString().slice(0, 10)
+      : String(entry?.data_date || '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) datesByMetric.get(entry.metric_type).add(rawDate);
+  }
+  return order.map(metricType => {
+    const dates = [...(datesByMetric.get(metricType) || [])].sort();
+    const name = metricNames[metricType] || metricType;
+    if (!dates.length) return `${name}: 登録0日`;
+    if (dates.length === 1) return `${name}: 登録1日（${dates[0]}）`;
+    return `${name}: 登録${dates.length}日（${dates[0]}〜${dates.at(-1)}）`;
+  });
+}
+
 function managementDataPeriodContext(entries, startDate, endDate) {
   const rows = Array.isArray(entries) ? entries : [];
   const groups = new Map();
@@ -328,8 +356,9 @@ function managementDataPeriodContext(entries, startDate, endDate) {
   const summaries = [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, items]) => managementDataSummaryContext(items)).filter(Boolean);
   const aggregates = managementDataPeriodAggregates(rows);
   const trends = managementDataPeriodTrendMetrics(rows);
+  const completeness = managementDataPeriodCompleteness(rows);
   const body = summaries.length
-    ? `${startDate}から${endDate}までの期間で、本人確認済み経営数値が保存されている日だけを列挙します（未登録日は0として扱いません）。登録済み日は${summaries.length}日です。合計・平均・期間内の最初と最後の登録値の差分はサーバー側で計算済みの値を優先して使用し、指定期間の全日数を分母にした平均として表現しないでください。ユーザーが明示的に仮定計算を求めていない限り、不足している指標を別日の値や推測値で補完して試算しないでください。\nサーバー計算済み集計（再計算せずこの値を使用）:\n${aggregates.length ? aggregates.join('\n') : '集計対象の指標はありません。'}\nサーバー計算済み期間内差分（再計算せずこの値を使用）:\n${trends.length ? trends.join('\n') : '2日以上登録されている同一指標はありません。'}\n日別の確認済みデータ:\n${summaries.map(item => item.body).join('\n')}`
+    ? `${startDate}から${endDate}までの期間で、本人確認済み経営数値が保存されている日だけを列挙します（未登録日は0として扱いません）。登録済み日は${summaries.length}日です。合計・平均・期間内の最初と最後の登録値の差分はサーバー側で計算済みの値を優先して使用し、指定期間の全日数を分母にした平均として表現しないでください。ユーザーが明示的に仮定計算を求めていない限り、不足している指標を別日の値や推測値で補完して試算しないでください。\nデータ登録状況（指標ごとの登録日数。未登録日は0値ではありません）:\n${completeness.join('\n')}\nサーバー計算済み集計（再計算せずこの値を使用）:\n${aggregates.length ? aggregates.join('\n') : '集計対象の指標はありません。'}\nサーバー計算済み期間内差分（再計算せずこの値を使用）:\n${trends.length ? trends.join('\n') : '2日以上登録されている同一指標はありません。'}\n日別の確認済みデータ:\n${summaries.map(item => item.body).join('\n')}`
     : `${startDate}から${endDate}までの期間に、本人確認済み経営数値はありません。`;
   return { category:'経営数値', title:`期間経営状況 ${startDate}〜${endDate}`, body, source:'本人確認済み経営数値' };
 }
@@ -454,4 +483,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
