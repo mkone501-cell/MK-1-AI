@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
+const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
 
 test('Phase 6.7 parses a confirmed management-data fact question', () => {
@@ -620,4 +620,41 @@ test('Phase 6.22 daily comparison context includes server-calculated delta befor
   assert.match(context.body, /サーバー計算済み差分（再計算せずこの値を使用）/);
   assert.match(context.body, /差\+10,000円、増減率\+6.67%/);
   assert.match(context.body, /日別の本人確認済みデータ/);
+});
+
+
+test('Phase 6.23 computes first-to-last period changes deterministically', () => {
+  const lines = managementDataPeriodTrendMetrics([
+    { data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' },
+    { data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' }
+  ]);
+  assert.ok(lines.includes('売上: 2026-09-21の150,000円 → 2026-09-22の160,000円、差+10,000円、増減率+6.67%'));
+});
+
+test('Phase 6.23 skips trend calculation for metrics registered on only one day', () => {
+  const lines = managementDataPeriodTrendMetrics([
+    { data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' },
+    { data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' },
+    { data_date:'2026-09-22', metric_type:'customers', amount:'80', currency:'COUNT' }
+  ]);
+  assert.equal(lines.some(line => /来客数/.test(line)), false);
+  assert.equal(lines.some(line => /売上/.test(line)), true);
+});
+
+test('Phase 6.23 period context includes server-calculated first-to-last change', () => {
+  const context = managementDataPeriodContext([
+    { business_key:'north-star-beans', data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' },
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' }
+  ], '2026-09-01', '2026-09-30');
+  assert.match(context.body, /サーバー計算済み期間内差分（再計算せずこの値を使用）/);
+  assert.match(context.body, /差\+10,000円、増減率\+6.67%/);
+});
+
+test('Phase 6.23 handles zero first value without fabricating a rate', () => {
+  const lines = managementDataPeriodTrendMetrics([
+    { data_date:'2026-09-21', metric_type:'revenue', amount:'0', currency:'JPY' },
+    { data_date:'2026-09-22', metric_type:'revenue', amount:'10000', currency:'JPY' }
+  ]);
+  assert.match(lines[0], /差\+10,000円/);
+  assert.match(lines[0], /増減率は基準値0のため算出不可/);
 });
