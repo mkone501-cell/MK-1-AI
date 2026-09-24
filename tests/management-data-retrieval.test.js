@@ -557,3 +557,13 @@ test('Phase 6.21 period context includes server-calculated aggregates before dai
   assert.match(context.body, /日別の確認済みデータ/);
   assert.doesNotMatch(context.body, /指定期間の全日数を分母にした平均として表現しないでください。\n9月21日/);
 });
+
+test('Phase 6.21 fix tells analysis not to fill missing metrics with another day assumptions', () => {
+  const context = managementDataPeriodContext([
+    { business_key:'north-star-beans', data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' },
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' },
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'average_spend', amount:'2000', currency:'JPY' }
+  ], '2026-09-01', '2026-09-30');
+  assert.match(context.body, /明示的に仮定計算を求めていない限り/);
+  assert.match(context.body, /不足している指標を別日の値や推測値で補完して試算しない/);
+});
