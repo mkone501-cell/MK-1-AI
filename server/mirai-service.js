@@ -31,6 +31,30 @@ function isPrivateKnowledgeQuestion(message) {
   return /(?:私(?:の|が)|うち(?:の|は)|自社|当社|会社|店舗|お店|カフェ|north\s+star\s+beans|好きな数字|営業時間|定休日|スタッフ|社員|売上|ec|広告|不動産|物件|財務)/i.test(String(message || ''));
 }
 
+function hasManagementDataKnowledge(knowledge) {
+  return (Array.isArray(knowledge) ? knowledge : []).some(item =>
+    item?.source === '本人確認済み経営数値' || item?.category === '経営数値'
+  );
+}
+
+function userRequestedHypotheticalCalculation(message) {
+  const text = String(message || '');
+  return /(?:仮定して|仮に|もし|シミュレーション|試算して|想定して|だとすると|とした場合|ならどう)/.test(text);
+}
+
+function stripUnsolicitedHypotheticalCalculations(answer) {
+  const text = String(answer || '').trim();
+  if (!text) return text;
+  const forbidden = /(?:仮に|仮定(?:すると|した場合|すれば)|もし[^。！？\n]{0,100}(?:なら|場合)|推定(?:すると|すれば|した場合)|換算すると)/;
+  const lines = text.split('\n').map(line => {
+    if (!line.trim()) return '';
+    const parts = line.match(/[^。！？]+[。！？]?/g) || [line];
+    return parts.filter(part => !forbidden.test(part)).join('').trim();
+  }).filter((line, index, all) => line || (index > 0 && index < all.length - 1));
+  const cleaned = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  return cleaned || '登録済みの経営数値だけでは、追加の仮定なしにこれ以上の計算はできません。';
+}
+
 function extractOutputText(response) {
   if (typeof response.output_text === 'string' && response.output_text.trim()) return response.output_text.trim();
   const parts = [];
@@ -108,10 +132,13 @@ class MiraiService {
 
     if (!response.ok) throw await createOpenAIError(response);
     const data = await response.json();
-    const answer = extractOutputText(data);
+    let answer = extractOutputText(data);
     if (!answer) throw new Error('OpenAI API returned an empty response');
+    if (hasManagementDataKnowledge(knowledge) && !userRequestedHypotheticalCalculation(message)) {
+      answer = stripUnsolicitedHypotheticalCalculations(answer);
+    }
     return { answer, mode: 'openai', approval };
   }
 }
 
-module.exports = { MiraiService, OPENAI_TIMEOUT_MS, MIRAI_INSTRUCTIONS, SIMPLE_FACT_INSTRUCTIONS, isSimpleFactQuestion, isSimpleKnowledgeQuestion, isPrivateKnowledgeQuestion, extractOutputText, classifyOpenAIError, createOpenAIError };
+module.exports = { MiraiService, OPENAI_TIMEOUT_MS, MIRAI_INSTRUCTIONS, SIMPLE_FACT_INSTRUCTIONS, isSimpleFactQuestion, isSimpleKnowledgeQuestion, isPrivateKnowledgeQuestion, hasManagementDataKnowledge, userRequestedHypotheticalCalculation, stripUnsolicitedHypotheticalCalculations, extractOutputText, classifyOpenAIError, createOpenAIError };
