@@ -242,6 +242,45 @@ function managementDataSummaryContext(entries) {
 }
 
 
+function managementDataPeriodAggregates(entries) {
+  const rows = (Array.isArray(entries) ? entries : []).filter(entry => Number.isFinite(Number(entry?.amount)));
+  if (!rows.length) return [];
+  const metricNames = { revenue:'売上', expense:'経費', profit:'利益', customers:'来客数', average_spend:'客単価', cash_balance:'現金残高' };
+  const grouped = new Map();
+  for (const entry of rows) {
+    if (!grouped.has(entry.metric_type)) grouped.set(entry.metric_type, []);
+    grouped.get(entry.metric_type).push(entry);
+  }
+  const format = (value, currency) => {
+    const rounded = Number.isInteger(value) ? value : Number(value.toFixed(2));
+    const unit = currency === 'JPY' ? '円' : currency === 'COUNT' ? '人' : currency ? ` ${currency}` : '';
+    return `${rounded.toLocaleString('ja-JP')}${unit}`;
+  };
+  const lines = [];
+  const additive = new Set(['revenue','expense','profit','customers']);
+  for (const [metricType, items] of grouped.entries()) {
+    const name = metricNames[metricType] || metricType;
+    const currency = items[0]?.currency || '';
+    const values = items.map(item => Number(item.amount));
+    if (additive.has(metricType)) {
+      const total = values.reduce((sum, value) => sum + value, 0);
+      const average = total / values.length;
+      lines.push(`${name}: 登録済み${values.length}日分の合計${format(total, currency)}、登録済み${values.length}日平均${format(average, currency)}`);
+      continue;
+    }
+    if (metricType === 'average_spend') {
+      const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+      lines.push(`${name}: 登録済み${values.length}日平均${format(average, currency)}`);
+      continue;
+    }
+    if (metricType === 'cash_balance') {
+      const latest = [...items].sort((a, b) => String(a.data_date).localeCompare(String(b.data_date))).at(-1);
+      lines.push(`${name}: 最新の登録値${format(Number(latest.amount), latest.currency || currency)}`);
+    }
+  }
+  return lines;
+}
+
 function managementDataPeriodContext(entries, startDate, endDate) {
   const rows = Array.isArray(entries) ? entries : [];
   const groups = new Map();
@@ -252,8 +291,9 @@ function managementDataPeriodContext(entries, startDate, endDate) {
     groups.get(rawDate).push(entry);
   }
   const summaries = [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, items]) => managementDataSummaryContext(items)).filter(Boolean);
+  const aggregates = managementDataPeriodAggregates(rows);
   const body = summaries.length
-    ? `${startDate}から${endDate}までの期間で、本人確認済み経営数値が保存されている日だけを列挙します（未登録日は0として扱いません）。登録済み日は${summaries.length}日です。合計・平均を計算する場合は登録済み日だけを対象にし、「登録済み${summaries.length}日間の合計」「登録済み${summaries.length}日平均」と明記してください。指定期間の全日数を分母にした平均として表現しないでください。\n${summaries.map(item => item.body).join('\n')}`
+    ? `${startDate}から${endDate}までの期間で、本人確認済み経営数値が保存されている日だけを列挙します（未登録日は0として扱いません）。登録済み日は${summaries.length}日です。合計・平均はサーバー側で計算済みの値を優先して使用し、指定期間の全日数を分母にした平均として表現しないでください。\nサーバー計算済み集計（再計算せずこの値を使用）:\n${aggregates.length ? aggregates.join('\n') : '集計対象の指標はありません。'}\n日別の確認済みデータ:\n${summaries.map(item => item.body).join('\n')}`
     : `${startDate}から${endDate}までの期間に、本人確認済み経営数値はありません。`;
   return { category:'経営数値', title:`期間経営状況 ${startDate}〜${endDate}`, body, source:'本人確認済み経営数値' };
 }
@@ -342,4 +382,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
