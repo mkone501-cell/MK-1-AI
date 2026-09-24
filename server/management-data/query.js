@@ -281,6 +281,41 @@ function managementDataPeriodAggregates(entries) {
   return lines;
 }
 
+function managementDataPeriodTrendMetrics(entries) {
+  const rows = (Array.isArray(entries) ? entries : []).filter(entry =>
+    Number.isFinite(Number(entry?.amount)) && entry?.metric_type
+  );
+  if (!rows.length) return [];
+  const names = { revenue:'売上', expense:'経費', profit:'利益', customers:'来客数', average_spend:'客単価', cash_balance:'現金残高' };
+  const grouped = new Map();
+  for (const entry of rows) {
+    if (!grouped.has(entry.metric_type)) grouped.set(entry.metric_type, []);
+    grouped.get(entry.metric_type).push(entry);
+  }
+  const format = (value, currency, signed = false) => {
+    const rounded = Number.isInteger(value) ? value : Number(value.toFixed(2));
+    const sign = signed && rounded > 0 ? '+' : '';
+    const unit = currency === 'JPY' ? '円' : currency === 'COUNT' ? '人' : currency ? ` ${currency}` : '';
+    return `${sign}${rounded.toLocaleString('ja-JP')}${unit}`;
+  };
+  const lines = [];
+  for (const [metricType, items] of grouped.entries()) {
+    if (items.length < 2) continue;
+    const sorted = [...items].sort((a, b) => String(a.data_date).localeCompare(String(b.data_date)));
+    const first = sorted[0];
+    const last = sorted.at(-1);
+    if (first.currency !== last.currency) continue;
+    const firstValue = Number(first.amount);
+    const lastValue = Number(last.amount);
+    const diff = lastValue - firstValue;
+    const rate = firstValue === 0 ? null : diff / firstValue * 100;
+    const name = names[metricType] || metricType;
+    const rateText = rate === null ? '増減率は基準値0のため算出不可' : `増減率${rate > 0 ? '+' : ''}${Number(rate.toFixed(2)).toLocaleString('ja-JP')}%`;
+    lines.push(`${name}: ${String(first.data_date).slice(0,10)}の${format(firstValue, first.currency)} → ${String(last.data_date).slice(0,10)}の${format(lastValue, last.currency)}、差${format(diff, last.currency, true)}、${rateText}`);
+  }
+  return lines;
+}
+
 function managementDataPeriodContext(entries, startDate, endDate) {
   const rows = Array.isArray(entries) ? entries : [];
   const groups = new Map();
@@ -292,8 +327,9 @@ function managementDataPeriodContext(entries, startDate, endDate) {
   }
   const summaries = [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, items]) => managementDataSummaryContext(items)).filter(Boolean);
   const aggregates = managementDataPeriodAggregates(rows);
+  const trends = managementDataPeriodTrendMetrics(rows);
   const body = summaries.length
-    ? `${startDate}から${endDate}までの期間で、本人確認済み経営数値が保存されている日だけを列挙します（未登録日は0として扱いません）。登録済み日は${summaries.length}日です。合計・平均はサーバー側で計算済みの値を優先して使用し、指定期間の全日数を分母にした平均として表現しないでください。ユーザーが明示的に仮定計算を求めていない限り、不足している指標を別日の値や推測値で補完して試算しないでください。\nサーバー計算済み集計（再計算せずこの値を使用）:\n${aggregates.length ? aggregates.join('\n') : '集計対象の指標はありません。'}\n日別の確認済みデータ:\n${summaries.map(item => item.body).join('\n')}`
+    ? `${startDate}から${endDate}までの期間で、本人確認済み経営数値が保存されている日だけを列挙します（未登録日は0として扱いません）。登録済み日は${summaries.length}日です。合計・平均・期間内の最初と最後の登録値の差分はサーバー側で計算済みの値を優先して使用し、指定期間の全日数を分母にした平均として表現しないでください。ユーザーが明示的に仮定計算を求めていない限り、不足している指標を別日の値や推測値で補完して試算しないでください。\nサーバー計算済み集計（再計算せずこの値を使用）:\n${aggregates.length ? aggregates.join('\n') : '集計対象の指標はありません。'}\nサーバー計算済み期間内差分（再計算せずこの値を使用）:\n${trends.length ? trends.join('\n') : '2日以上登録されている同一指標はありません。'}\n日別の確認済みデータ:\n${summaries.map(item => item.body).join('\n')}`
     : `${startDate}から${endDate}までの期間に、本人確認済み経営数値はありません。`;
   return { category:'経営数値', title:`期間経営状況 ${startDate}〜${endDate}`, body, source:'本人確認済み経営数値' };
 }
@@ -418,4 +454,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
