@@ -384,6 +384,44 @@ function managementDataConsistencyChecks(entries) {
   return lines;
 }
 
+function managementDataAnalysisReadiness(entries) {
+  const rows = (Array.isArray(entries) ? entries : []).filter(entry => entry?.metric_type);
+  const dateSets = new Map();
+  for (const entry of rows) {
+    if (!dateSets.has(entry.metric_type)) dateSets.set(entry.metric_type, new Set());
+    const rawDate = entry?.data_date instanceof Date
+      ? entry.data_date.toISOString().slice(0, 10)
+      : String(entry?.data_date || '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) dateSets.get(entry.metric_type).add(rawDate);
+  }
+  const count = metric => (dateSets.get(metric) || new Set()).size;
+  const overlapCount = metrics => {
+    if (!metrics.length) return 0;
+    const sets = metrics.map(metric => dateSets.get(metric) || new Set());
+    if (sets.some(set => !set.size)) return 0;
+    return [...sets[0]].filter(date => sets.every(set => set.has(date))).length;
+  };
+  const lines = [];
+  lines.push(count('revenue') >= 1
+    ? `売上集計: 実行可能（売上登録${count('revenue')}日）`
+    : '売上集計: 不可（売上未登録）');
+  lines.push(count('revenue') >= 2
+    ? `売上推移: 実行可能（売上登録${count('revenue')}日）`
+    : `売上推移: データ不足（売上登録${count('revenue')}日、2日以上必要）`);
+  const trafficOverlap = overlapCount(['revenue','customers','average_spend']);
+  lines.push(trafficOverlap >= 1
+    ? `来客数・客単価・売上の関係: 実行可能（同日登録${trafficOverlap}日）`
+    : '来客数・客単価・売上の関係: データ不足（3指標の同日登録が必要）');
+  const profitOverlap = overlapCount(['revenue','expense','profit']);
+  lines.push(profitOverlap >= 1
+    ? `収益性確認: 実行可能（売上・経費・利益の同日登録${profitOverlap}日）`
+    : '収益性確認: データ不足（売上・経費・利益の同日登録が必要）');
+  lines.push(count('cash_balance') >= 1
+    ? `現金残高確認: 実行可能（現金残高登録${count('cash_balance')}日）`
+    : '現金残高確認: データ不足（現金残高未登録）');
+  return lines;
+}
+
 function managementDataPeriodContext(entries, startDate, endDate) {
   const rows = Array.isArray(entries) ? entries : [];
   const groups = new Map();
@@ -398,8 +436,9 @@ function managementDataPeriodContext(entries, startDate, endDate) {
   const trends = managementDataPeriodTrendMetrics(rows);
   const completeness = managementDataPeriodCompleteness(rows);
   const consistency = managementDataConsistencyChecks(rows);
+  const readiness = managementDataAnalysisReadiness(rows);
   const body = summaries.length
-    ? `${startDate}から${endDate}までの期間で、本人確認済み経営数値が保存されている日だけを列挙します（未登録日は0として扱いません）。登録済み日は${summaries.length}日です。合計・平均・期間内の最初と最後の登録値の差分はサーバー側で計算済みの値を優先して使用し、指定期間の全日数を分母にした平均として表現しないでください。ユーザーが明示的に仮定計算を求めていない限り、不足している指標を別日の値や推測値で補完して試算しないでください。\nデータ登録状況（指標ごとの登録日数。未登録日は0値ではありません）:\n${completeness.join('\n')}\nサーバー計算済み集計（再計算せずこの値を使用）:\n${aggregates.length ? aggregates.join('\n') : '集計対象の指標はありません。'}\nサーバー計算済み期間内差分（再計算せずこの値を使用）:\n${trends.length ? trends.join('\n') : '2日以上登録されている同一指標はありません。'}\nサーバー計算済み整合性確認（再計算せずこの値を使用）:\n${consistency.length ? consistency.join('\n') : '整合性確認に必要な指標の組み合わせはありません。'}\n日別の確認済みデータ:\n${summaries.map(item => item.body).join('\n')}`
+    ? `${startDate}から${endDate}までの期間で、本人確認済み経営数値が保存されている日だけを列挙します（未登録日は0として扱いません）。登録済み日は${summaries.length}日です。合計・平均・期間内の最初と最後の登録値の差分はサーバー側で計算済みの値を優先して使用し、指定期間の全日数を分母にした平均として表現しないでください。ユーザーが明示的に仮定計算を求めていない限り、不足している指標を別日の値や推測値で補完して試算しないでください。\n分析可能範囲（サーバー判定）:\n${readiness.join('\n')}\nデータ登録状況（指標ごとの登録日数。未登録日は0値ではありません）:\n${completeness.join('\n')}\nサーバー計算済み集計（再計算せずこの値を使用）:\n${aggregates.length ? aggregates.join('\n') : '集計対象の指標はありません。'}\nサーバー計算済み期間内差分（再計算せずこの値を使用）:\n${trends.length ? trends.join('\n') : '2日以上登録されている同一指標はありません。'}\nサーバー計算済み整合性確認（再計算せずこの値を使用）:\n${consistency.length ? consistency.join('\n') : '整合性確認に必要な指標の組み合わせはありません。'}\n日別の確認済みデータ:\n${summaries.map(item => item.body).join('\n')}`
     : `${startDate}から${endDate}までの期間に、本人確認済み経営数値はありません。`;
   return { category:'経営数値', title:`期間経営状況 ${startDate}〜${endDate}`, body, source:'本人確認済み経営数値' };
 }
@@ -524,4 +563,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
