@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
+const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
 
 test('Phase 6.7 parses a confirmed management-data fact question', () => {
@@ -737,4 +737,43 @@ test('Phase 6.25 period context includes server-calculated consistency checks', 
   ], '2026-09-01', '2026-09-30');
   assert.match(context.body, /サーバー計算済み整合性確認（再計算せずこの値を使用）/);
   assert.match(context.body, /80人 × 2,000円 = 160,000円、登録売上160,000円（一致）/);
+});
+
+
+test('Phase 6.27 reports what analyses are possible from the registered metrics', () => {
+  const lines = managementDataAnalysisReadiness([
+    { data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' },
+    { data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' },
+    { data_date:'2026-09-22', metric_type:'customers', amount:'80', currency:'COUNT' },
+    { data_date:'2026-09-22', metric_type:'average_spend', amount:'2000', currency:'JPY' }
+  ]);
+  assert.ok(lines.includes('売上集計: 実行可能（売上登録2日）'));
+  assert.ok(lines.includes('売上推移: 実行可能（売上登録2日）'));
+  assert.ok(lines.includes('来客数・客単価・売上の関係: 実行可能（同日登録1日）'));
+  assert.ok(lines.includes('収益性確認: データ不足（売上・経費・利益の同日登録が必要）'));
+  assert.ok(lines.includes('現金残高確認: データ不足（現金残高未登録）'));
+});
+
+test('Phase 6.27 requires same-day overlap for relationship and profitability analysis', () => {
+  const lines = managementDataAnalysisReadiness([
+    { data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' },
+    { data_date:'2026-09-22', metric_type:'customers', amount:'80', currency:'COUNT' },
+    { data_date:'2026-09-23', metric_type:'average_spend', amount:'2000', currency:'JPY' },
+    { data_date:'2026-09-24', metric_type:'expense', amount:'90000', currency:'JPY' },
+    { data_date:'2026-09-25', metric_type:'profit', amount:'60000', currency:'JPY' }
+  ]);
+  assert.ok(lines.includes('来客数・客単価・売上の関係: データ不足（3指標の同日登録が必要）'));
+  assert.ok(lines.includes('収益性確認: データ不足（売上・経費・利益の同日登録が必要）'));
+});
+
+test('Phase 6.27 period context exposes server analysis-readiness guidance', () => {
+  const context = managementDataPeriodContext([
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' },
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'customers', amount:'80', currency:'COUNT' },
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'average_spend', amount:'2000', currency:'JPY' }
+  ], '2026-09-22', '2026-09-22');
+  assert.match(context.body, /分析可能範囲（サーバー判定）/);
+  assert.match(context.body, /売上集計: 実行可能/);
+  assert.match(context.body, /売上推移: データ不足/);
+  assert.match(context.body, /収益性確認: データ不足/);
 });
