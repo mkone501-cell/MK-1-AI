@@ -14,3 +14,14 @@ test('Phase 6.5 runs the management-data migration through its repository at sta
   const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
   assert.match(source, /migrateManagementData\(app\.managementData\)/);
 });
+
+
+test('Phase 6.26 routes daily analysis through deterministic period context', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /managementQuery\.metricType === 'daily_analysis'[\s\S]*managementDataPeriodContext\(entries, managementQuery\.dataDate, managementQuery\.dataDate\)/);
+});
+
+test('Phase 6.26 keeps daily summary on the concise summary context', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /: managementDataSummaryContext\(entries\)/);
+});
