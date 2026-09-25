@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
+const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
 
 test('Phase 6.7 parses a confirmed management-data fact question', () => {
@@ -776,4 +776,37 @@ test('Phase 6.27 period context exposes server analysis-readiness guidance', () 
   assert.match(context.body, /売上集計: 実行可能/);
   assert.match(context.body, /売上推移: データ不足/);
   assert.match(context.body, /収益性確認: データ不足/);
+});
+
+
+test('Phase 6.28 recommends the next concrete registrations for a single-day data set', () => {
+  const lines = managementDataNextRequiredInputs([
+    { data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' },
+    { data_date:'2026-09-22', metric_type:'customers', amount:'80', currency:'COUNT' },
+    { data_date:'2026-09-22', metric_type:'average_spend', amount:'2000', currency:'JPY' }
+  ]);
+  assert.ok(lines.includes('優先1: 別日の売上をもう1日以上登録すると、売上推移・増減率の分析が可能になります。'));
+  assert.ok(lines.includes('優先3: 2026-09-22の経費・利益を登録すると、収益性の確認が可能になります。'));
+  assert.ok(lines.includes('優先4: 現金残高を1日分登録すると、資金残高の確認が可能になります。'));
+  assert.equal(lines.some(line => /来客数・客単価を登録/.test(line)), false);
+});
+
+test('Phase 6.28 recommends missing traffic metrics on the latest revenue date', () => {
+  const lines = managementDataNextRequiredInputs([
+    { data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' },
+    { data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' }
+  ]);
+  assert.ok(lines.includes('優先2: 2026-09-22の来客数・客単価を登録すると、来客数・客単価・売上の関係を確認できます。'));
+});
+
+test('Phase 6.28 period context exposes next required inputs after readiness', () => {
+  const context = managementDataPeriodContext([
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' },
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'customers', amount:'80', currency:'COUNT' },
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'average_spend', amount:'2000', currency:'JPY' }
+  ], '2026-09-22', '2026-09-22');
+  assert.match(context.body, /次に登録すると分析が広がる項目（サーバー判定）/);
+  assert.match(context.body, /別日の売上をもう1日以上登録すると/);
+  assert.match(context.body, /2026-09-22の経費・利益を登録すると/);
+  assert.match(context.body, /現金残高を1日分登録すると/);
 });
