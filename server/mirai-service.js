@@ -69,8 +69,31 @@ function extractManagementNextInputs(knowledge) {
   return [...new Set(sections)];
 }
 
-function appendManagementNextInputs(answer, knowledge) {
-  const items = extractManagementNextInputs(knowledge);
+function filterManagementNextInputsForMessage(items, message) {
+  const source = Array.isArray(items) ? items : [];
+  const text = String(message || '');
+  if (!source.length) return [];
+  if (/(?:経営状況|経営全体|全体(?:を|の)?分析|総合(?:的)?(?:に|な)?分析)/.test(text)) return source;
+
+  const focus = new Set();
+  if (/(?:売上|増減|推移|トレンド|前年比|前月比)/.test(text)) focus.add('sales');
+  if (/(?:来客|客数|客単価|売上構成)/.test(text)) focus.add('traffic');
+  if (/(?:収益|利益|経費|原価|粗利|採算|利益率)/.test(text)) focus.add('profit');
+  if (/(?:現金|資金|キャッシュ|残高|資金繰り)/.test(text)) focus.add('cash');
+  if (!focus.size) return source;
+
+  return source.filter(item => {
+    const content = item.replace(/^優先\d+:\s*/, '');
+    if (focus.has('sales') && /(?:別日の売上|売上推移|増減率)/.test(content)) return true;
+    if (focus.has('traffic') && /(?:来客数|客単価|売上の関係)/.test(content)) return true;
+    if (focus.has('profit') && /(?:経費|利益|収益性)/.test(content)) return true;
+    if (focus.has('cash') && /(?:現金残高|資金残高)/.test(content)) return true;
+    return false;
+  });
+}
+
+function appendManagementNextInputs(answer, knowledge, message = '') {
+  const items = filterManagementNextInputsForMessage(extractManagementNextInputs(knowledge), message);
   if (!items.length) return String(answer || '').trim();
   const text = String(answer || '').trim();
   const missing = items.filter(item => {
@@ -164,10 +187,10 @@ class MiraiService {
       answer = stripUnsolicitedHypotheticalCalculations(answer);
     }
     if (hasManagementDataKnowledge(knowledge)) {
-      answer = appendManagementNextInputs(answer, knowledge);
+      answer = appendManagementNextInputs(answer, knowledge, message);
     }
     return { answer, mode: 'openai', approval };
   }
 }
 
-module.exports = { MiraiService, OPENAI_TIMEOUT_MS, MIRAI_INSTRUCTIONS, SIMPLE_FACT_INSTRUCTIONS, isSimpleFactQuestion, isSimpleKnowledgeQuestion, isPrivateKnowledgeQuestion, hasManagementDataKnowledge, userRequestedHypotheticalCalculation, stripUnsolicitedHypotheticalCalculations, extractManagementNextInputs, appendManagementNextInputs, extractOutputText, classifyOpenAIError, createOpenAIError };
+module.exports = { MiraiService, OPENAI_TIMEOUT_MS, MIRAI_INSTRUCTIONS, SIMPLE_FACT_INSTRUCTIONS, isSimpleFactQuestion, isSimpleKnowledgeQuestion, isPrivateKnowledgeQuestion, hasManagementDataKnowledge, userRequestedHypotheticalCalculation, stripUnsolicitedHypotheticalCalculations, extractManagementNextInputs, filterManagementNextInputsForMessage, appendManagementNextInputs, extractOutputText, classifyOpenAIError, createOpenAIError };
