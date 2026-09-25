@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { MIRAI_INSTRUCTIONS, userRequestedHypotheticalCalculation, stripUnsolicitedHypotheticalCalculations } = require('../server/mirai-service');
+const { MIRAI_INSTRUCTIONS, userRequestedHypotheticalCalculation, stripUnsolicitedHypotheticalCalculations, extractManagementNextInputs, appendManagementNextInputs } = require('../server/mirai-service');
 
 test('Phase 6.21 fix forbids unsolicited hypothetical fills for missing management metrics', () => {
   assert.match(MIRAI_INSTRUCTIONS, /明示的に「仮定して」「もし〜なら」などのシナリオ計算を求めた場合を除き/);
@@ -27,4 +27,56 @@ test('Phase 6.21 fix 2 recognizes explicit user requests for scenario calculatio
   assert.equal(userRequestedHypotheticalCalculation('9/21の客単価を2,000円と仮定して来客数を計算して'), true);
   assert.equal(userRequestedHypotheticalCalculation('もし客単価が2,000円なら何人ですか'), true);
   assert.equal(userRequestedHypotheticalCalculation('2026年9月の経営状況を分析して'), false);
+});
+
+
+test('Phase 6.28 fix extracts server-determined next registration items from management knowledge', () => {
+  const knowledge = [{
+    category:'経営数値',
+    source:'本人確認済み経営数値',
+    body:[
+      '分析可能範囲（サーバー判定）:',
+      '売上集計: 実行可能（売上登録1日）',
+      '次に登録すると分析が広がる項目（サーバー判定）:',
+      '優先1: 別日の売上をもう1日以上登録すると、売上推移・増減率の分析が可能になります。',
+      '優先3: 2026-09-22の経費・利益を登録すると、収益性の確認が可能になります。',
+      '優先4: 現金残高を1日分登録すると、資金残高の確認が可能になります。',
+      'データ登録状況（指標ごとの登録日数。未登録日は0値ではありません）:',
+      '売上: 登録1日（2026-09-22）'
+    ].join('\n')
+  }];
+  const items = extractManagementNextInputs(knowledge);
+  assert.equal(items.length, 3);
+  assert.match(items[0], /別日の売上をもう1日以上/);
+});
+
+test('Phase 6.28 fix appends missing next registration guidance deterministically', () => {
+  const knowledge = [{
+    category:'経営数値',
+    source:'本人確認済み経営数値',
+    body:[
+      '次に登録すると分析が広がる項目（サーバー判定）:',
+      '優先1: 別日の売上をもう1日以上登録すると、売上推移・増減率の分析が可能になります。',
+      '優先3: 2026-09-22の経費・利益を登録すると、収益性の確認が可能になります。',
+      'データ登録状況（指標ごとの登録日数。未登録日は0値ではありません）:'
+    ].join('\n')
+  }];
+  const answer = appendManagementNextInputs('売上構成は確認できます。', knowledge);
+  assert.match(answer, /次に登録すると分析が広がります/);
+  assert.match(answer, /別日の売上をもう1日以上登録すると/);
+  assert.match(answer, /2026-09-22の経費・利益を登録すると/);
+});
+
+test('Phase 6.28 fix does not duplicate next registration guidance already present', () => {
+  const knowledge = [{
+    category:'経営数値',
+    source:'本人確認済み経営数値',
+    body:[
+      '次に登録すると分析が広がる項目（サーバー判定）:',
+      '優先1: 別日の売上をもう1日以上登録すると、売上推移・増減率の分析が可能になります。',
+      'データ登録状況（指標ごとの登録日数。未登録日は0値ではありません）:'
+    ].join('\n')
+  }];
+  const original = '別日の売上をもう1日以上登録すると、売上推移・増減率の分析が可能になります。';
+  assert.equal(appendManagementNextInputs(original, knowledge), original);
 });
