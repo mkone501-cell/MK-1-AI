@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { MIRAI_INSTRUCTIONS, userRequestedHypotheticalCalculation, stripUnsolicitedHypotheticalCalculations, extractManagementNextInputs, appendManagementNextInputs } = require('../server/mirai-service');
+const { MIRAI_INSTRUCTIONS, userRequestedHypotheticalCalculation, stripUnsolicitedHypotheticalCalculations, extractManagementNextInputs, filterManagementNextInputsForMessage, appendManagementNextInputs } = require('../server/mirai-service');
 
 test('Phase 6.21 fix forbids unsolicited hypothetical fills for missing management metrics', () => {
   assert.match(MIRAI_INSTRUCTIONS, /明示的に「仮定して」「もし〜なら」などのシナリオ計算を求めた場合を除き/);
@@ -79,4 +79,55 @@ test('Phase 6.28 fix does not duplicate next registration guidance already prese
   }];
   const original = '別日の売上をもう1日以上登録すると、売上推移・増減率の分析が可能になります。';
   assert.equal(appendManagementNextInputs(original, knowledge), original);
+});
+
+
+test('Phase 6.29 narrows next-input guidance to sales when the user asks about sales trends', () => {
+  const items = [
+    '優先1: 別日の売上をもう1日以上登録すると、売上推移・増減率の分析が可能になります。',
+    '優先3: 2026-09-22の経費・利益を登録すると、収益性の確認が可能になります。',
+    '優先4: 現金残高を1日分登録すると、資金残高の確認が可能になります。'
+  ];
+  const filtered = filterManagementNextInputsForMessage(items, '売上推移を分析して');
+  assert.equal(filtered.length, 1);
+  assert.match(filtered[0], /別日の売上/);
+});
+
+test('Phase 6.29 narrows next-input guidance to profitability when asked about profitability', () => {
+  const items = [
+    '優先1: 別日の売上をもう1日以上登録すると、売上推移・増減率の分析が可能になります。',
+    '優先3: 2026-09-22の経費・利益を登録すると、収益性の確認が可能になります。',
+    '優先4: 現金残高を1日分登録すると、資金残高の確認が可能になります。'
+  ];
+  const filtered = filterManagementNextInputsForMessage(items, '収益性と利益を分析して');
+  assert.equal(filtered.length, 1);
+  assert.match(filtered[0], /経費・利益/);
+});
+
+test('Phase 6.29 keeps all next-input guidance for general management analysis', () => {
+  const items = [
+    '優先1: 別日の売上をもう1日以上登録すると、売上推移・増減率の分析が可能になります。',
+    '優先3: 2026-09-22の経費・利益を登録すると、収益性の確認が可能になります。',
+    '優先4: 現金残高を1日分登録すると、資金残高の確認が可能になります。'
+  ];
+  const filtered = filterManagementNextInputsForMessage(items, 'NORTH STAR BEANSの経営状況を分析して');
+  assert.equal(filtered.length, 3);
+});
+
+test('Phase 6.29 appends only focused next-input guidance to the answer', () => {
+  const knowledge = [{
+    category:'経営数値',
+    source:'本人確認済み経営数値',
+    body:[
+      '次に登録すると分析が広がる項目（サーバー判定）:',
+      '優先1: 別日の売上をもう1日以上登録すると、売上推移・増減率の分析が可能になります。',
+      '優先3: 2026-09-22の経費・利益を登録すると、収益性の確認が可能になります。',
+      '優先4: 現金残高を1日分登録すると、資金残高の確認が可能になります。',
+      'データ登録状況（指標ごとの登録日数。未登録日は0値ではありません）:'
+    ].join('\n')
+  }];
+  const answer = appendManagementNextInputs('売上は1日分です。', knowledge, '売上推移を分析して');
+  assert.match(answer, /別日の売上をもう1日以上/);
+  assert.doesNotMatch(answer, /経費・利益/);
+  assert.doesNotMatch(answer, /現金残高/);
 });
