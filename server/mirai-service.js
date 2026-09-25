@@ -55,6 +55,32 @@ function stripUnsolicitedHypotheticalCalculations(answer) {
   return cleaned || '登録済みの経営数値だけでは、追加の仮定なしにこれ以上の計算はできません。';
 }
 
+function extractManagementNextInputs(knowledge) {
+  const sections = [];
+  for (const item of Array.isArray(knowledge) ? knowledge : []) {
+    const body = String(item?.body || '');
+    if (!body.includes('次に登録すると分析が広がる項目（サーバー判定）:')) continue;
+    const after = body.split('次に登録すると分析が広がる項目（サーバー判定）:')[1] || '';
+    const block = after.split(/\n(?:データ登録状況|サーバー計算済み集計|サーバー計算済み期間内差分|サーバー計算済み整合性確認|日別の確認済みデータ):/)[0] || '';
+    for (const line of block.split('\n').map(v => v.trim()).filter(Boolean)) {
+      if (/^優先\d+:/.test(line)) sections.push(line);
+    }
+  }
+  return [...new Set(sections)];
+}
+
+function appendManagementNextInputs(answer, knowledge) {
+  const items = extractManagementNextInputs(knowledge);
+  if (!items.length) return String(answer || '').trim();
+  const text = String(answer || '').trim();
+  const missing = items.filter(item => {
+    const content = item.replace(/^優先\d+:\s*/, '');
+    return content && !text.includes(content);
+  });
+  if (!missing.length) return text;
+  return `${text}\n\n次に登録すると分析が広がります。\n${missing.map(item => `- ${item.replace(/^優先\d+:\s*/, '')}`).join('\n')}`.trim();
+}
+
 function extractOutputText(response) {
   if (typeof response.output_text === 'string' && response.output_text.trim()) return response.output_text.trim();
   const parts = [];
@@ -137,8 +163,11 @@ class MiraiService {
     if (hasManagementDataKnowledge(knowledge) && !userRequestedHypotheticalCalculation(message)) {
       answer = stripUnsolicitedHypotheticalCalculations(answer);
     }
+    if (hasManagementDataKnowledge(knowledge)) {
+      answer = appendManagementNextInputs(answer, knowledge);
+    }
     return { answer, mode: 'openai', approval };
   }
 }
 
-module.exports = { MiraiService, OPENAI_TIMEOUT_MS, MIRAI_INSTRUCTIONS, SIMPLE_FACT_INSTRUCTIONS, isSimpleFactQuestion, isSimpleKnowledgeQuestion, isPrivateKnowledgeQuestion, hasManagementDataKnowledge, userRequestedHypotheticalCalculation, stripUnsolicitedHypotheticalCalculations, extractOutputText, classifyOpenAIError, createOpenAIError };
+module.exports = { MiraiService, OPENAI_TIMEOUT_MS, MIRAI_INSTRUCTIONS, SIMPLE_FACT_INSTRUCTIONS, isSimpleFactQuestion, isSimpleKnowledgeQuestion, isPrivateKnowledgeQuestion, hasManagementDataKnowledge, userRequestedHypotheticalCalculation, stripUnsolicitedHypotheticalCalculations, extractManagementNextInputs, appendManagementNextInputs, extractOutputText, classifyOpenAIError, createOpenAIError };
