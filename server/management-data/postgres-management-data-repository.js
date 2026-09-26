@@ -36,6 +36,22 @@ class PostgresManagementDataRepository {
     );
     return result.rows[0] || null;
   }
+  async update(ownerEmail, id, input) {
+    if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
+    if (typeof id !== 'string' || !id.trim()) return null;
+    const value = normalizeEntry(input); if (!value) return null;
+    const result = await this.pool.query(
+      `UPDATE management_data
+          SET amount = $6, currency = $7, note = $8, source = $9, updated_at = NOW()
+        WHERE id = $1 AND owner_email = $2 AND business_key = $3
+          AND data_date = $4::date AND metric_type = $5
+          AND confirmed_by_owner = TRUE
+        RETURNING id, owner_email, business_key, data_date, metric_type, amount, currency, note, source,
+                  confirmed_by_owner, created_at, updated_at`,
+      [id.trim(), ownerEmail.trim(), value.businessKey, value.dataDate, value.metricType, value.amount, value.currency, value.note, value.source]
+    );
+    return result.rows[0] || null;
+  }
   async findExact(ownerEmail, query) {
     if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
     if (!query?.businessKey || !query?.dataDate || !query?.metricType) return null;
