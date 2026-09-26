@@ -40,3 +40,11 @@ test('Phase 6.32 routes focused monthly and annual analysis through focused grou
   assert.match(source, /annual_period_analysis[\s\S]*managementDataFocusedMultiYearContext/);
   assert.match(source, /annual_comparison[\s\S]*managementDataFocusedMultiYearContext/);
 });
+
+
+test('Phase 6.35 replaces the model reply with deterministic pending-save wording before confirmation', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /if \(managementDataCandidates\.length\) \{/);
+  assert.match(source, /answer:managementDataCandidateAcknowledgement\(managementDataCandidates\)/);
+  assert.match(source, /conversations\.appendExchange[\s\S]*answer:result\.answer/);
+});
