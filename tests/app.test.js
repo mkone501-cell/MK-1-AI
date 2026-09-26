@@ -272,3 +272,16 @@ test('Phase 6.38 fix hydrates returned candidate lists even when conversationId 
   assert.match(source, /managementDataProposals = \(result\.managementDataCandidates \|\| \[\]\)/);
   assert.doesNotMatch(source, /if \(serverConversation && result\.conversationId\) \{/);
 });
+
+
+test('Phase 6.42 UI shows restore as a separate owner-confirmed action and sends the audited history id', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, '../app.js'), 'utf8');
+  assert.match(source, /経営数値の復元候補があります/);
+  assert.match(source, /変更履歴上の最初の値/);
+  assert.match(source, /確認して復元/);
+  assert.match(source, /今回は復元しない/);
+  assert.match(source, /restoreHistoryEntryId:item\.restoreHistoryEntryId \|\| null/);
+  assert.match(source, /result\.restored \? '確認した経営数値を最初の値へ復元しました。'/);
+});
