@@ -482,6 +482,10 @@ function createApplication(options = {}) {
           if (managementData) {
             const restoreQuery = detectManagementDataRestoreRequest(message, history);
             if (restoreQuery) {
+              // A restore request owns this turn: never let a coincidental numeric phrase
+              // fall through as an ordinary create/update candidate.
+              managementDataCandidates = [];
+              managementDataDuplicateCount = 0;
               try {
                 const restoreHistory = await managementData.findHistory(auth.ownerEmail, restoreQuery);
                 const restoreBusinessKeys = [...new Set(restoreHistory.map(entry => String(entry.business_key || '').trim()).filter(Boolean))];
