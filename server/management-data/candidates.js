@@ -60,13 +60,29 @@ function detectManagementDataCandidate(message) {
 }
 
 
-function managementDataCandidateAcknowledgement(candidates) {
+function isSameManagementDataValue(existing, candidate) {
+  if (!existing || !candidate) return false;
+  const existingAmount = Number(existing.amount);
+  const candidateAmount = Number(candidate.amount);
+  const existingCurrency = String(existing.currency || '').trim().toUpperCase();
+  const candidateCurrency = String(candidate.currency || '').trim().toUpperCase();
+  return Number.isFinite(existingAmount) && Number.isFinite(candidateAmount) &&
+    existingAmount === candidateAmount && existingCurrency === candidateCurrency;
+}
+
+function managementDataCandidateAcknowledgement(candidates, duplicateCount = 0) {
   const count = Array.isArray(candidates) ? candidates.length : 0;
-  if (!count) return '';
-  if (count === 1) {
-    return '経営数値の保存候補を作成しました。まだ保存していません。下の内容を確認し、「確認して保存」を押した場合だけ保存します。';
-  }
-  return `経営数値の保存候補を${count}件作成しました。まだ保存していません。下の内容を確認し、それぞれ「確認して保存」を押した場合だけ保存します。`;
+  const duplicates = Number.isInteger(duplicateCount) && duplicateCount > 0 ? duplicateCount : 0;
+  const duplicateText = duplicates
+    ? (duplicates === 1
+      ? '同じ経営数値1件はすでに登録済みのため、重複保存候補にはしません。'
+      : `同じ経営数値${duplicates}件はすでに登録済みのため、重複保存候補にはしません。`)
+    : '';
+  if (!count) return duplicateText;
+  const pendingText = count === 1
+    ? '経営数値の保存候補を作成しました。まだ保存していません。下の内容を確認し、「確認して保存」を押した場合だけ保存します。'
+    : `経営数値の保存候補を${count}件作成しました。まだ保存していません。下の内容を確認し、それぞれ「確認して保存」を押した場合だけ保存します。`;
+  return [duplicateText, pendingText].filter(Boolean).join(' ');
 }
 
 function detectManagementDataCandidates(message) {
@@ -126,4 +142,4 @@ function detectManagementDataCandidates(message) {
   return candidates;
 }
 
-module.exports = { detectManagementDataCandidate, detectManagementDataCandidates, managementDataCandidateAcknowledgement, parseAmount };
+module.exports = { detectManagementDataCandidate, detectManagementDataCandidates, isSameManagementDataValue, managementDataCandidateAcknowledgement, parseAmount };
