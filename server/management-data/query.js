@@ -192,12 +192,14 @@ function detectManagementDataQuery(message) {
   if (!dataDates.length) {
     const monthParse = parseBusinessAndMonths(text);
     if (comparisonRequested && monthParse.months.length >= 2) {
-      return { businessKey:monthParse.businessKey, metricType:'monthly_comparison', months:monthParse.months.slice(0, 2) };
+      const analysisFocus = detectManagementAnalysisFocus(text);
+      return { businessKey:monthParse.businessKey, metricType:'monthly_comparison', months:monthParse.months.slice(0, 2), ...(analysisFocus ? { analysisFocus } : {}) };
     }
     if (rangeRequested && monthParse.months.length >= 2) {
       const months = enumerateMonthRanges(monthParse.months[0], monthParse.months[1], 12);
       if (!months.length) return null;
-      return { businessKey:monthParse.businessKey, metricType:'monthly_period_analysis', months };
+      const analysisFocus = detectManagementAnalysisFocus(text);
+      return { businessKey:monthParse.businessKey, metricType:'monthly_period_analysis', months, ...(analysisFocus ? { analysisFocus } : {}) };
     }
     const monthRange = monthParse.months[0] ? {
       businessKey:monthParse.businessKey,
@@ -211,17 +213,20 @@ function detectManagementDataQuery(message) {
     }
     const yearCompare = parseBusinessAndYears(text);
     if (comparisonRequested && yearCompare.years.length >= 2) {
-      return { businessKey:yearCompare.businessKey, metricType:'annual_comparison', years:yearCompare.years.slice(0, 2) };
+      const analysisFocus = detectManagementAnalysisFocus(text);
+      return { businessKey:yearCompare.businessKey, metricType:'annual_comparison', years:yearCompare.years.slice(0, 2), ...(analysisFocus ? { analysisFocus } : {}) };
     }
     if (rangeRequested && yearCompare.years.length >= 2) {
       const years = enumerateYearRanges(yearCompare.years[0], yearCompare.years[1], 5);
       if (!years.length) return null;
-      return { businessKey:yearCompare.businessKey, metricType:'annual_period_analysis', years };
+      const analysisFocus = detectManagementAnalysisFocus(text);
+      return { businessKey:yearCompare.businessKey, metricType:'annual_period_analysis', years, ...(analysisFocus ? { analysisFocus } : {}) };
     }
     const yearParse = parseBusinessAndYearMonths(text);
     const yearRequested = /年間|年次|経営状況|経営数値|売上|来客数|客単価|経費|利益|分析|まとめ|推移|傾向/.test(text);
     if (yearParse && yearRequested) {
-      return { businessKey:yearParse.businessKey, metricType:'monthly_period_analysis', months:yearParse.months };
+      const analysisFocus = detectManagementAnalysisFocus(text);
+      return { businessKey:yearParse.businessKey, metricType:'monthly_period_analysis', months:yearParse.months, ...(analysisFocus ? { analysisFocus } : {}) };
     }
   }
   const analysisRequested = /分析|評価|考察|どう(?:だった|でした)|良かった|悪かった/.test(text);
@@ -593,6 +598,38 @@ function managementDataPeriodContext(entries, startDate, endDate) {
   return { category:'経営数値', title:`期間経営状況 ${startDate}〜${endDate}`, body, source:'本人確認済み経営数値' };
 }
 
+function managementDataFocusLabel(focus) {
+  return { sales:'売上', traffic:'来客数・客単価・売上', profit:'収益性', cash:'現金残高' }[focus] || '経営数値';
+}
+
+function managementDataFocusedGroupedContext(groups, focus, periodLabel, comparison = false) {
+  const safeGroups = Array.isArray(groups) ? groups : [];
+  if (!safeGroups.length) return null;
+  const label = managementDataFocusLabel(focus);
+  const items = safeGroups.map(group => ({
+    label:group?.label || `${group?.startDate}〜${group?.endDate}`,
+    context:managementDataFocusedPeriodContext(group?.entries || [], group?.startDate, group?.endDate, focus)
+  }));
+  const available = items.filter(item => item.context && !/本人確認済み経営数値はありません/.test(item.context.body));
+  const missing = items.filter(item => !item.context || /本人確認済み経営数値はありません/.test(item.context.body)).map(item => item.label);
+  const unit = periodLabel === 'year' ? '年' : '月';
+  const body = [
+    `ユーザーは${label}に絞った${unit}ごとの${comparison ? '比較' : '推移分析'}を求めています。頼まれていない別分野へ話を広げないでください。`,
+    `未登録日・未登録${unit}は0として扱わないでください。`,
+    missing.length ? `データ未登録の${unit}: ${missing.join('、')}` : '',
+    ...available.map(item => `${item.label}:\n${item.context.body}`)
+  ].filter(Boolean).join('\n');
+  return { category:'経営数値', title:`${label}の${unit}次${comparison ? '比較' : '推移'}`, body, source:'本人確認済み経営数値' };
+}
+
+function managementDataFocusedMultiMonthContext(groups, focus, comparison = false) {
+  return managementDataFocusedGroupedContext(groups, focus, 'month', comparison);
+}
+
+function managementDataFocusedMultiYearContext(groups, focus, comparison = false) {
+  return managementDataFocusedGroupedContext(groups, focus, 'year', comparison);
+}
+
 function managementDataMultiMonthContext(groups) {
   const items = (Array.isArray(groups) ? groups : []).map(group => ({
     label:group?.label || `${group?.startDate}〜${group?.endDate}`,
@@ -713,4 +750,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
