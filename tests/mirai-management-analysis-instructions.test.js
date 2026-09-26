@@ -131,3 +131,33 @@ test('Phase 6.29 appends only focused next-input guidance to the answer', () => 
   assert.doesNotMatch(answer, /経費・利益/);
   assert.doesNotMatch(answer, /現金残高/);
 });
+
+
+test('Phase 6.33 extracts top-level missing-month guidance without swallowing nested month data', () => {
+  const knowledge = [{
+    category:'経営数値',
+    source:'本人確認済み経営数値',
+    body:[
+      'データ未登録の月: 2026年8月',
+      '次に登録すると分析が広がる項目（サーバー判定）:',
+      '優先1: 2026年8月の売上を1日分以上登録すると、2026年8月を月次比較の対象にできます。',
+      '月別の確認済みデータ:',
+      '2026年9月:',
+      '次に登録すると分析が広がる項目（サーバー判定）:',
+      '優先1: 別日の売上をもう1日以上登録すると、売上推移・増減率の分析が可能になります。'
+    ].join('\n')
+  }];
+  const items = extractManagementNextInputs(knowledge);
+  assert.deepEqual(items, [
+    '優先1: 2026年8月の売上を1日分以上登録すると、2026年8月を月次比較の対象にできます。'
+  ]);
+});
+
+test('Phase 6.33 keeps missing-month sales guidance for a sales comparison question', () => {
+  const items = [
+    '優先1: 2026年8月の売上を1日分以上登録すると、2026年8月を月次比較の対象にできます。'
+  ];
+  const filtered = filterManagementNextInputsForMessage(items, '2026年8月と9月のNORTH STAR BEANSの売上を比較して');
+  assert.equal(filtered.length, 1);
+  assert.match(filtered[0], /2026年8月の売上/);
+});

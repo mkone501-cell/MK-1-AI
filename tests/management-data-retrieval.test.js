@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
+const { detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
 
 test('Phase 6.7 parses a confirmed management-data fact question', () => {
@@ -956,4 +956,36 @@ test('Phase 6.32 focused multi-year comparison omits unrelated metrics', () => {
   ], 'sales', true);
   assert.match(context.body, /売上に絞った年ごとの比較/);
   assert.doesNotMatch(context.body, /来客数80人/);
+});
+
+
+test('Phase 6.33 builds concrete guidance for a missing comparison month', () => {
+  const lines = managementDataMissingPeriodNextInputs(['2026年8月'], 'sales', 'month', true);
+  assert.deepEqual(lines, [
+    '優先1: 2026年8月の売上を1日分以上登録すると、2026年8月を月次比較の対象にできます。'
+  ]);
+});
+
+test('Phase 6.33 asks for same-day profitability metrics for a missing year', () => {
+  const lines = managementDataMissingPeriodNextInputs(['2025年'], 'profit', 'year', true);
+  assert.deepEqual(lines, [
+    '優先1: 2025年の売上・経費・利益を同じ日に1日分以上登録すると、2025年を年次比較の対象にできます。'
+  ]);
+});
+
+test('Phase 6.33 focused monthly comparison exposes missing-month next input before available data', () => {
+  const context = managementDataFocusedMultiMonthContext([
+    { label:'2026年8月', startDate:'2026-08-01', endDate:'2026-08-31', entries:[] },
+    {
+      label:'2026年9月', startDate:'2026-09-01', endDate:'2026-09-30',
+      entries:[
+        { business_key:'north-star-beans', data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' },
+        { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' }
+      ]
+    }
+  ], 'sales', true);
+  assert.match(context.body, /データ未登録の月: 2026年8月/);
+  assert.match(context.body, /次に登録すると分析が広がる項目（サーバー判定）:/);
+  assert.match(context.body, /2026年8月の売上を1日分以上登録すると、2026年8月を月次比較の対象にできます/);
+  assert.match(context.body, /月別の確認済みデータ:/);
 });

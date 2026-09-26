@@ -602,6 +602,22 @@ function managementDataFocusLabel(focus) {
   return { sales:'売上', traffic:'来客数・客単価・売上', profit:'収益性', cash:'現金残高' }[focus] || '経営数値';
 }
 
+function managementDataMissingPeriodNextInputs(missingLabels, focus, periodLabel, comparison = false) {
+  const labels = Array.isArray(missingLabels) ? missingLabels.filter(Boolean) : [];
+  if (!labels.length) return [];
+  const required = {
+    sales:'売上を1日分以上',
+    traffic:'売上・来客数・客単価を同じ日に1日分以上',
+    profit:'売上・経費・利益を同じ日に1日分以上',
+    cash:'現金残高を1日分以上'
+  }[focus] || '必要な経営数値を1日分以上';
+  const scope = periodLabel === 'year' ? '年次' : '月次';
+  const goal = comparison ? `${scope}比較` : `${scope}推移分析`;
+  return labels.map((label, index) =>
+    `優先${index + 1}: ${label}の${required}登録すると、${label}を${goal}の対象にできます。`
+  );
+}
+
 function managementDataFocusedGroupedContext(groups, focus, periodLabel, comparison = false) {
   const safeGroups = Array.isArray(groups) ? groups : [];
   if (!safeGroups.length) return null;
@@ -612,11 +628,17 @@ function managementDataFocusedGroupedContext(groups, focus, periodLabel, compari
   }));
   const available = items.filter(item => item.context && !/本人確認済み経営数値はありません/.test(item.context.body));
   const missing = items.filter(item => !item.context || /本人確認済み経営数値はありません/.test(item.context.body)).map(item => item.label);
+  const missingInputs = managementDataMissingPeriodNextInputs(missing, focus, periodLabel, comparison);
   const unit = periodLabel === 'year' ? '年' : '月';
   const body = [
     `ユーザーは${label}に絞った${unit}ごとの${comparison ? '比較' : '推移分析'}を求めています。頼まれていない別分野へ話を広げないでください。`,
     `未登録日・未登録${unit}は0として扱わないでください。`,
     missing.length ? `データ未登録の${unit}: ${missing.join('、')}` : '',
+    ...(missingInputs.length ? [
+      '次に登録すると分析が広がる項目（サーバー判定）:',
+      ...missingInputs,
+      `${unit}別の確認済みデータ:`
+    ] : []),
     ...available.map(item => `${item.label}:\n${item.context.body}`)
   ].filter(Boolean).join('\n');
   return { category:'経営数値', title:`${label}の${unit}次${comparison ? '比較' : '推移'}`, body, source:'本人確認済み経営数値' };
@@ -750,4 +772,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
