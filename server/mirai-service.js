@@ -61,7 +61,7 @@ function extractManagementNextInputs(knowledge) {
     const body = String(item?.body || '');
     if (!body.includes('次に登録すると分析が広がる項目（サーバー判定）:')) continue;
     const after = body.split('次に登録すると分析が広がる項目（サーバー判定）:')[1] || '';
-    const block = after.split(/\n(?:データ登録状況|サーバー計算済み集計|サーバー計算済み期間内差分|サーバー計算済み整合性確認|日別の確認済みデータ):/)[0] || '';
+    const block = after.split(/\n(?:データ登録状況|サーバー計算済み集計|サーバー計算済み期間内差分|サーバー計算済み整合性確認|日別の確認済みデータ|月別の確認済みデータ|年別の確認済みデータ):/)[0] || '';
     for (const line of block.split('\n').map(v => v.trim()).filter(Boolean)) {
       if (/^優先\d+:/.test(line)) sections.push(line);
     }
@@ -84,7 +84,7 @@ function filterManagementNextInputsForMessage(items, message) {
 
   return source.filter(item => {
     const content = item.replace(/^優先\d+:\s*/, '');
-    if (focus.has('sales') && /(?:別日の売上|売上推移|増減率)/.test(content)) return true;
+    if (focus.has('sales') && /(?:別日の売上|売上推移|増減率|売上.*(?:月次|年次)(?:比較|推移))/.test(content)) return true;
     if (focus.has('traffic') && /(?:来客数|客単価|売上の関係)/.test(content)) return true;
     if (focus.has('profit') && /(?:経費|利益|収益性)/.test(content)) return true;
     if (focus.has('cash') && /(?:現金残高|資金残高)/.test(content)) return true;
