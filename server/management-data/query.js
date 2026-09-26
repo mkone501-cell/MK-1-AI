@@ -213,7 +213,7 @@ function detectManagementDataQuery(message) {
   }
   const analysisRequested = /分析|評価|考察|どう(?:だった|でした)|良かった|悪かった/.test(text);
   const summaryRequested = /経営状況|経営数値|日次(?:の)?(?:状況|実績|まとめ)|まとめて/.test(text);
-  const focusedMetricRequested = /売上|来客数|客数|来店客数|客単価|平均客単価|経費|費用|利益|営業利益|現金残高|資金|キャッシュ/.test(text);
+  const focusedMetricRequested = /売上|来客数|客数|来店客数|客単価|平均客単価|経費|費用|利益|営業利益|収益性|採算|粗利|現金残高|資金|キャッシュ/.test(text);
   const metricType = analysisRequested && (summaryRequested || focusedMetricRequested)
     ? 'daily_analysis'
     : summaryRequested
@@ -230,6 +230,18 @@ function detectManagementDataQuery(message) {
                 ? 'revenue'
                 : null;
   if (!businessKey || !metricType || !dataDate) return null;
+  if (metricType === 'daily_analysis' && !summaryRequested) {
+    const analysisFocus = /収益性|採算|粗利|利益|営業利益|経費|費用/.test(text)
+      ? 'profit'
+      : /来客数|客数|来店客数|客単価|平均客単価/.test(text)
+        ? 'traffic'
+        : /現金残高|資金|キャッシュ/.test(text)
+          ? 'cash'
+          : /売上/.test(text)
+            ? 'sales'
+            : null;
+    return { businessKey, metricType, dataDate, ...(analysisFocus ? { analysisFocus } : {}) };
+  }
   return { businessKey, metricType, dataDate };
 }
 
@@ -480,6 +492,80 @@ function managementDataNextRequiredInputs(entries) {
   return lines.length ? lines : ['追加登録の優先項目はありません。現在の主要分析項目は利用可能です。'];
 }
 
+function managementDataFocusedPeriodContext(entries, startDate, endDate, focus) {
+  const rows = Array.isArray(entries) ? entries : [];
+  const focusConfig = {
+    sales: {
+      label:'売上',
+      metrics:['revenue'],
+      readiness:/^売上(?:集計|推移):/,
+      next:/売上/,
+      consistency:null
+    },
+    traffic: {
+      label:'来客数・客単価・売上',
+      metrics:['revenue','customers','average_spend'],
+      readiness:/^来客数・客単価・売上の関係:/,
+      next:/来客数|客単価|売上の関係/,
+      consistency:/売上整合性/
+    },
+    profit: {
+      label:'収益性',
+      metrics:['revenue','expense','profit'],
+      readiness:/^収益性確認:/,
+      next:/経費|利益|収益性/,
+      consistency:/利益整合性/
+    },
+    cash: {
+      label:'現金残高',
+      metrics:['cash_balance'],
+      readiness:/^現金残高確認:/,
+      next:/現金残高|資金残高/,
+      consistency:null
+    }
+  }[focus];
+  if (!focusConfig) return managementDataPeriodContext(rows, startDate, endDate);
+
+  const focusedRows = rows.filter(entry => focusConfig.metrics.includes(entry?.metric_type));
+  const aggregates = managementDataPeriodAggregates(focusedRows);
+  const trends = managementDataPeriodTrendMetrics(focusedRows);
+  const readiness = managementDataAnalysisReadiness(rows).filter(line => focusConfig.readiness.test(line));
+  const nextInputs = managementDataNextRequiredInputs(rows).filter(line => focusConfig.next.test(line));
+  const consistency = focusConfig.consistency
+    ? managementDataConsistencyChecks(rows).filter(line => focusConfig.consistency.test(line))
+    : [];
+  const summaries = [];
+  const groups = new Map();
+  for (const entry of focusedRows) {
+    const rawDate = entry?.data_date instanceof Date ? entry.data_date.toISOString().slice(0, 10) : String(entry?.data_date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) continue;
+    if (!groups.has(rawDate)) groups.set(rawDate, []);
+    groups.get(rawDate).push(entry);
+  }
+  for (const [, items] of [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    const context = managementDataSummaryContext(items);
+    if (context) summaries.push(context);
+  }
+  const body = summaries.length
+    ? [
+        `ユーザーは${focusConfig.label}に絞った分析を求めています。頼まれていない別分野へ話を広げず、以下の本人確認済み経営数値だけで回答してください。`,
+        `対象期間: ${startDate}〜${endDate}`,
+        '分析可能範囲（サーバー判定）:',
+        ...(readiness.length ? readiness : ['該当分析の判定情報はありません。']),
+        '次に登録すると分析が広がる項目（サーバー判定）:',
+        ...(nextInputs.length ? nextInputs : ['追加登録の優先項目はありません。']),
+        'サーバー計算済み集計（再計算せずこの値を使用）:',
+        ...(aggregates.length ? aggregates : ['集計対象の指標はありません。']),
+        'サーバー計算済み期間内差分（再計算せずこの値を使用）:',
+        ...(trends.length ? trends : ['2日以上登録されている同一指標はありません。']),
+        ...(consistency.length ? ['サーバー計算済み整合性確認（再計算せずこの値を使用）:', ...consistency] : []),
+        '日別の確認済みデータ:',
+        ...summaries.map(item => item.body)
+      ].join('\n')
+    : `${startDate}から${endDate}までの期間に、${focusConfig.label}の本人確認済み経営数値はありません。`;
+  return { category:'経営数値', title:`${focusConfig.label}分析 ${startDate}〜${endDate}`, body, source:'本人確認済み経営数値' };
+}
+
 function managementDataPeriodContext(entries, startDate, endDate) {
   const rows = Array.isArray(entries) ? entries : [];
   const groups = new Map();
@@ -622,4 +708,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };

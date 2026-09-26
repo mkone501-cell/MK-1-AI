@@ -21,7 +21,7 @@ const { proposeMemory } = require('./knowledge/update-candidates');
 const { detectManagementDataCandidate, detectManagementDataCandidates } = require('./management-data/candidates');
 const { PostgresManagementDataRepository } = require('./management-data/postgres-management-data-repository');
 const { migrateManagementData } = require('./management-data/migrate-management-data');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
+const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
 
 const ROOT = path.resolve(__dirname, '..');
 const MAX_BODY_BYTES = 32 * 1024;
@@ -435,7 +435,9 @@ function createApplication(options = {}) {
                 } else if (managementQuery.metricType === 'daily_summary' || managementQuery.metricType === 'daily_analysis') {
                   const entries = await managementData.findDaily(auth.ownerEmail, managementQuery);
                   const context = managementQuery.metricType === 'daily_analysis'
-                    ? managementDataPeriodContext(entries, managementQuery.dataDate, managementQuery.dataDate)
+                    ? (managementQuery.analysisFocus
+                      ? managementDataFocusedPeriodContext(entries, managementQuery.dataDate, managementQuery.dataDate, managementQuery.analysisFocus)
+                      : managementDataPeriodContext(entries, managementQuery.dataDate, managementQuery.dataDate))
                     : managementDataSummaryContext(entries);
                   if (managementQuery.metricType === 'daily_analysis') {
                     const scoped = scopeManagementAnalysisInputs({ query:managementQuery, history:replyHistory, knowledge:selectedKnowledge, context });

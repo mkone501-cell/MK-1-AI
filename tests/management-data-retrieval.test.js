@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
+const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
 
 test('Phase 6.7 parses a confirmed management-data fact question', () => {
@@ -831,4 +831,39 @@ test('Phase 6.29 fix keeps plain daily metric fact lookup exact', () => {
     detectManagementDataQuery('2026年9月22日のNORTH STAR BEANSの売上はいくらですか？'),
     { businessKey:'north-star-beans', metricType:'revenue', dataDate:'2026-09-22' }
   );
+});
+
+
+test('Phase 6.30 marks focused daily sales analysis with sales focus', () => {
+  assert.deepEqual(
+    detectManagementDataQuery('2026年9月22日のNORTH STAR BEANSの売上推移を分析して'),
+    { businessKey:'north-star-beans', metricType:'daily_analysis', dataDate:'2026-09-22', analysisFocus:'sales' }
+  );
+});
+
+test('Phase 6.30 focused sales context omits unrelated management metrics', () => {
+  const context = managementDataFocusedPeriodContext([
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' },
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'customers', amount:'80', currency:'COUNT' },
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'average_spend', amount:'2000', currency:'JPY' }
+  ], '2026-09-22', '2026-09-22', 'sales');
+  assert.match(context.body, /ユーザーは売上に絞った分析を求めています/);
+  assert.match(context.body, /売上推移: データ不足/);
+  assert.match(context.body, /別日の売上をもう1日以上登録すると/);
+  assert.doesNotMatch(context.body, /来客数80人/);
+  assert.doesNotMatch(context.body, /客単価2,000円/);
+  assert.doesNotMatch(context.body, /収益性確認/);
+  assert.doesNotMatch(context.body, /現金残高確認/);
+});
+
+test('Phase 6.30 focused profitability context keeps only profitability-related facts', () => {
+  const context = managementDataFocusedPeriodContext([
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' },
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'expense', amount:'90000', currency:'JPY' },
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'profit', amount:'70000', currency:'JPY' },
+    { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'customers', amount:'80', currency:'COUNT' }
+  ], '2026-09-22', '2026-09-22', 'profit');
+  assert.match(context.body, /ユーザーは収益性に絞った分析を求めています/);
+  assert.match(context.body, /利益整合性/);
+  assert.doesNotMatch(context.body, /来客数80人/);
 });
