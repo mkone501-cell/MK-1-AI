@@ -1079,7 +1079,45 @@ test('Phase 6.45 whole-business history lookup is owner, business and confirmati
   await repo.findBusinessHistory('owner@example.com', 'north-star-beans');
   assert.deepEqual(seen.params, ['owner@example.com', 'north-star-beans']);
   assert.match(seen.sql, /FROM management_data_history/);
-  assert.match(seen.sql, /owner_email = \$1 AND business_key = \$2/);
+  assert.match(seen.sql, /history\.owner_email = \$1 AND history\.business_key = \$2/);
   assert.match(seen.sql, /confirmed_by_owner = TRUE/);
-  assert.match(seen.sql, /ORDER BY data_date ASC, metric_type ASC, changed_at ASC, id ASC/);
+  assert.match(seen.sql, /ORDER BY history\.data_date ASC, history\.metric_type ASC, history\.changed_at ASC, history\.id ASC/);
+});
+
+
+test('Phase 6.46 active management-data lookups ignore superseded duplicate rows', async () => {
+  const calls = [];
+  const pool = { async query(sql, params) { calls.push({ sql, params }); return { rows:[] }; } };
+  const repo = new PostgresManagementDataRepository(pool);
+  await repo.findExact('owner@example.com', { businessKey:'north-star-beans', dataDate:'2026-09-22', metricType:'revenue' });
+  await repo.findDaily('owner@example.com', { businessKey:'north-star-beans', dataDate:'2026-09-22' });
+  await repo.findRange('owner@example.com', { businessKey:'north-star-beans', startDate:'2026-09-01', endDate:'2026-09-30' });
+  await repo.findBusinessCurrent('owner@example.com', 'north-star-beans');
+  for (const call of calls) assert.match(call.sql, /superseded_by_management_data_id IS NULL/);
+});
+
+test('Phase 6.46 duplicate-group lookup returns all active confirmed rows for one logical item', async () => {
+  let seen = null;
+  const repo = new PostgresManagementDataRepository({
+    async query(sql, params) { seen = { sql, params }; return { rows:[] }; }
+  });
+  await repo.findDuplicateGroup('owner@example.com', {
+    businessKey:'north-star-beans',
+    dataDate:'2026-09-22',
+    metricType:'customers'
+  });
+  assert.deepEqual(seen.params, ['owner@example.com','north-star-beans','2026-09-22','customers']);
+  assert.match(seen.sql, /confirmed_by_owner = TRUE/);
+  assert.match(seen.sql, /superseded_by_management_data_id IS NULL/);
+  assert.doesNotMatch(seen.sql, /DISTINCT ON/);
+});
+
+test('Phase 6.46 history lookups ignore histories belonging only to superseded rows', async () => {
+  let seen = null;
+  const repo = new PostgresManagementDataRepository({
+    async query(sql, params) { seen = { sql, params }; return { rows:[] }; }
+  });
+  await repo.findBusinessHistory('owner@example.com', 'north-star-beans');
+  assert.match(seen.sql, /JOIN management_data AS current ON current.id = history.management_data_id/);
+  assert.match(seen.sql, /current.superseded_by_management_data_id IS NULL/);
 });
