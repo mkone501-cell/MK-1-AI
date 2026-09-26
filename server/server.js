@@ -21,7 +21,7 @@ const { proposeMemory } = require('./knowledge/update-candidates');
 const { detectManagementDataCandidate, detectManagementDataCandidates, isSameManagementDataValue, managementDataCandidateAcknowledgement } = require('./management-data/candidates');
 const { PostgresManagementDataRepository } = require('./management-data/postgres-management-data-repository');
 const { migrateManagementData } = require('./management-data/migrate-management-data');
-const { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, managementDataHistoryAnswer, detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
+const { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, managementDataHistoryAnswer, detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
 
 const ROOT = path.resolve(__dirname, '..');
 const MAX_BODY_BYTES = 32 * 1024;
@@ -309,6 +309,61 @@ function createApplication(options = {}) {
         if (body.confirmed !== true || typeof body.originalText !== 'string') {
           return respondJson(req, res, 400, { error:'保存には本人の明示的な確認が必要です。' });
         }
+        const requestedOperation = body.operation === 'restore' ? 'restore' : body.operation === 'update' ? 'update' : 'create';
+        if (requestedOperation === 'restore') {
+          if (!isInitialManagementDataRestorePhrase(body.originalText)) {
+            return respondJson(req, res, 409, { error:'復元の指示を安全に確認できません。もう一度変更履歴から復元を依頼してください。' });
+          }
+          const restoreQuery = {
+            businessKey:typeof body.businessKey === 'string' ? body.businessKey.trim() : '',
+            dataDate:typeof body.dataDate === 'string' ? body.dataDate.trim() : '',
+            metricType:typeof body.metricType === 'string' ? body.metricType.trim() : ''
+          };
+          const expectedEntryId = String(body.existingEntryId ?? '').trim();
+          const expectedPreviousAmount = Number(body.previousAmount);
+          const expectedPreviousCurrency = typeof body.previousCurrency === 'string' ? body.previousCurrency.trim().toUpperCase() : '';
+          const expectedHistoryId = String(body.restoreHistoryEntryId ?? '').trim();
+          if (!restoreQuery.businessKey || !/^\d{4}-\d{2}-\d{2}$/.test(restoreQuery.dataDate) ||
+              !restoreQuery.metricType || !/^\d+$/.test(expectedEntryId) || !/^\d+$/.test(expectedHistoryId) ||
+              !Number.isFinite(expectedPreviousAmount) || !expectedPreviousCurrency) {
+            return respondJson(req, res, 409, { error:'復元対象を安全に確認できません。変更履歴を確認してからもう一度依頼してください。' });
+          }
+          const restoreHistory = await managementData.findHistory(auth.ownerEmail, restoreQuery);
+          const initialHistory = restoreHistory[0] || null;
+          const existing = await managementData.findExact(auth.ownerEmail, restoreQuery);
+          if (!initialHistory || !existing || String(initialHistory.id) !== expectedHistoryId) {
+            return respondJson(req, res, 409, { error:'復元対象の変更履歴が最新状態と一致しません。変更履歴を確認してからもう一度依頼してください。', code:'MANAGEMENT_DATA_RESTORE_STALE' });
+          }
+          if (String(existing.id) !== expectedEntryId ||
+              Number(existing.amount) !== expectedPreviousAmount ||
+              String(existing.currency || '').trim().toUpperCase() !== expectedPreviousCurrency) {
+            return respondJson(req, res, 409, { error:'既存の経営数値が復元候補作成後に変更されています。最新の値を確認してから復元してください。', code:'MANAGEMENT_DATA_RESTORE_STALE' });
+          }
+          const targetAmount = Number(initialHistory.previous_amount);
+          const targetCurrency = String(initialHistory.previous_currency || '').trim().toUpperCase();
+          if (!Number.isFinite(targetAmount) || !targetCurrency ||
+              Number(body.amount) !== targetAmount ||
+              String(body.currency || '').trim().toUpperCase() !== targetCurrency) {
+            return respondJson(req, res, 409, { error:'復元する値を変更履歴から安全に確認できません。もう一度復元候補を作成してください。', code:'MANAGEMENT_DATA_RESTORE_REVIEW_REQUIRED' });
+          }
+          if (Number(existing.amount) === targetAmount &&
+              String(existing.currency || '').trim().toUpperCase() === targetCurrency) {
+            return respondJson(req, res, 200, { managementData:existing, duplicate:true, alreadyInitial:true });
+          }
+          const restored = await managementData.update(auth.ownerEmail, existing.id, {
+            businessKey:restoreQuery.businessKey,
+            dataDate:restoreQuery.dataDate,
+            metricType:restoreQuery.metricType,
+            amount:targetAmount,
+            currency:targetCurrency,
+            confirmed:true,
+            source:'owner confirmed history restore',
+            note:body.originalText
+          });
+          if (!restored) return respondJson(req, res, 409, { error:'復元対象を確認できませんでした。最新の変更履歴を確認してください。' });
+          return respondJson(req, res, 200, { managementData:restored, updated:true, restored:true });
+        }
+
         const candidate = detectManagementDataCandidates(body.originalText).find(item =>
           item.businessKey && item.dataDate &&
           item.metricType === body.metricType && item.amount === Number(body.amount) &&
@@ -322,7 +377,6 @@ function createApplication(options = {}) {
         if (isSameManagementDataValue(existing, candidate)) {
           return respondJson(req, res, 200, { managementData:existing, duplicate:true });
         }
-        const requestedOperation = body.operation === 'update' ? 'update' : 'create';
         if (existing) {
           if (requestedOperation !== 'update') {
             return respondJson(req, res, 409, { error:'同じ日・同じ項目に別の登録値があります。会話から更新候補を作り直して確認してください。', code:'MANAGEMENT_DATA_UPDATE_REVIEW_REQUIRED' });
@@ -426,8 +480,56 @@ function createApplication(options = {}) {
           }
           let managementDataDirectAnswer = null;
           if (managementData) {
-            const historyQuery = detectManagementDataHistoryQuery(message)
-              || detectManagementDataHistoryFollowUp(message, history);
+            const restoreQuery = detectManagementDataRestoreRequest(message, history);
+            if (restoreQuery) {
+              try {
+                const restoreHistory = await managementData.findHistory(auth.ownerEmail, restoreQuery);
+                const restoreBusinessKeys = [...new Set(restoreHistory.map(entry => String(entry.business_key || '').trim()).filter(Boolean))];
+                if (!restoreQuery.businessKey && restoreBusinessKeys.length > 1) {
+                  managementDataDirectAnswer = '同じ日・同じ項目に複数事業の変更履歴があります。復元する事業名を指定してください。まだ何も変更していません。';
+                } else {
+                  const resolvedRestoreQuery = restoreQuery.businessKey
+                    ? restoreQuery
+                    : restoreBusinessKeys.length === 1 ? { ...restoreQuery, businessKey:restoreBusinessKeys[0] } : null;
+                  if (!resolvedRestoreQuery || !restoreHistory.length) {
+                    managementDataDirectAnswer = '最初の値を確認できる変更履歴がありません。まだ何も変更していません。';
+                  } else {
+                    const currentEntry = await managementData.findExact(auth.ownerEmail, resolvedRestoreQuery);
+                    const initialHistory = restoreHistory[0];
+                    const initialAmount = Number(initialHistory.previous_amount);
+                    const initialCurrency = String(initialHistory.previous_currency || '').trim().toUpperCase();
+                    if (!currentEntry || !Number.isFinite(initialAmount) || !initialCurrency) {
+                      managementDataDirectAnswer = '現在値または最初の値を安全に確認できないため、復元候補は作成していません。';
+                    } else if (Number(currentEntry.amount) === initialAmount &&
+                               String(currentEntry.currency || '').trim().toUpperCase() === initialCurrency) {
+                      managementDataDirectAnswer = '現在の登録値はすでに変更履歴上の最初の値です。復元は行っていません。';
+                    } else {
+                      managementDataCandidates = [{
+                        kind:'management-data',
+                        businessKey:resolvedRestoreQuery.businessKey,
+                        metricType:resolvedRestoreQuery.metricType,
+                        amount:initialAmount,
+                        currency:initialCurrency,
+                        dataDate:resolvedRestoreQuery.dataDate,
+                        source:'history restore candidate',
+                        originalText:message,
+                        confirmed:false,
+                        operation:'restore',
+                        existingEntryId:currentEntry.id,
+                        previousAmount:Number(currentEntry.amount),
+                        previousCurrency:String(currentEntry.currency || '').trim().toUpperCase(),
+                        restoreHistoryEntryId:initialHistory.id
+                      }];
+                    }
+                  }
+                }
+              } catch {
+                logger.error('management_data.restore_candidate_failed');
+                return respondJson(req, res, 503, { error:'変更履歴から復元候補を作成できませんでした。時間をおいてお試しください。' });
+              }
+            }
+            const historyQuery = restoreQuery ? null : (detectManagementDataHistoryQuery(message)
+              || detectManagementDataHistoryFollowUp(message, history));
             if (historyQuery) {
               try {
                 const historyEntries = await managementData.findHistory(auth.ownerEmail, historyQuery);
