@@ -360,7 +360,10 @@ function detectManagementDataHistoryConsistencyQuery(message, history = []) {
   if (!asksHistoryConsistency) return null;
 
   const direct = managementTargetFromExplicitMessage(text);
-  const recentTurns = Array.isArray(history) ? history.slice(-4) : [];
+  // Consistency checks are read-only, so a slightly wider window is safe and
+  // lets follow-ups work after "今の売上" and "最後にいつ変更した" have already
+  // consumed a few turns. We still require a concrete dated management target.
+  const recentTurns = Array.isArray(history) ? history.slice(-8) : [];
   let contextualTarget = null;
   for (let index = recentTurns.length - 1; index >= 0; index--) {
     const turn = recentTurns[index];
