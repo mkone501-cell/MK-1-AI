@@ -21,7 +21,7 @@ const { proposeMemory } = require('./knowledge/update-candidates');
 const { detectManagementDataCandidate, detectManagementDataCandidates, isSameManagementDataValue, managementDataCandidateAcknowledgement } = require('./management-data/candidates');
 const { PostgresManagementDataRepository } = require('./management-data/postgres-management-data-repository');
 const { migrateManagementData } = require('./management-data/migrate-management-data');
-const { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, managementDataHistoryAnswer, detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
+const { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, managementDataHistoryAnswer, detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
 
 const ROOT = path.resolve(__dirname, '..');
 const MAX_BODY_BYTES = 32 * 1024;
@@ -532,7 +532,30 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'変更履歴から復元候補を作成できませんでした。時間をおいてお試しください。' });
               }
             }
-            const historyQuery = restoreQuery ? null : (detectManagementDataHistoryQuery(message)
+            const currentStateQuery = restoreQuery ? null : detectManagementDataCurrentStateQuery(message, history);
+            if (currentStateQuery) {
+              try {
+                const stateHistoryEntries = await managementData.findHistory(auth.ownerEmail, currentStateQuery);
+                const stateBusinessKeys = [...new Set(stateHistoryEntries.map(entry => String(entry.business_key || '').trim()).filter(Boolean))];
+                if (!currentStateQuery.businessKey && stateBusinessKeys.length > 1) {
+                  managementDataDirectAnswer = '同じ日・同じ項目に複数事業のデータがあります。現在値または変更日時を確認する事業名を指定してください。';
+                } else {
+                  const resolvedStateQuery = currentStateQuery.businessKey
+                    ? currentStateQuery
+                    : stateBusinessKeys.length === 1 ? { ...currentStateQuery, businessKey:stateBusinessKeys[0] } : null;
+                  if (!resolvedStateQuery) {
+                    managementDataDirectAnswer = '対象事業を安全に特定できません。事業名を含めて聞いてください。';
+                  } else {
+                    const currentStateEntry = await managementData.findExact(auth.ownerEmail, resolvedStateQuery);
+                    managementDataDirectAnswer = managementDataCurrentStateAnswer(currentStateEntry, stateHistoryEntries, resolvedStateQuery);
+                  }
+                }
+              } catch {
+                logger.error('management_data.current_state_search_failed');
+                return respondJson(req, res, 503, { error:'経営数値の現在値・変更日時を確認できませんでした。時間をおいてお試しください。' });
+              }
+            }
+            const historyQuery = restoreQuery || currentStateQuery ? null : (detectManagementDataHistoryQuery(message)
               || detectManagementDataHistoryFollowUp(message, history));
             if (historyQuery) {
               try {
