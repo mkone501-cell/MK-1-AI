@@ -77,7 +77,8 @@ test('Phase 6.37 converts a changed current value into an explicit update candid
 test('Phase 6.37 never updates unless the owner confirms the exact prior value', () => {
   const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
   assert.match(source, /requestedOperation = body\.operation === 'update' \? 'update' : 'create'/);
-  assert.match(source, /existing\.id !== expectedEntryId/);
+  assert.match(source, /\/\^\\d\+\$\/\.test\(expectedEntryId\)/);
+  assert.match(source, /String\(existing\.id\) !== expectedEntryId/);
   assert.match(source, /Number\(existing\.amount\) !== expectedPreviousAmount/);
   assert.match(source, /MANAGEMENT_DATA_UPDATE_STALE/);
   assert.match(source, /await managementData\.update\(auth\.ownerEmail, existing\.id/);
@@ -100,4 +101,12 @@ test('Phase 6.37 UI shows current and new values and sends update revision field
   assert.match(source, /existingEntryId:item\.existingEntryId \|\| null/);
   assert.match(source, /previousAmount:item\.previousAmount \?\? null/);
   assert.match(source, /result\.updated \? '確認した経営数値を更新しました。'/);
+});
+
+
+test('Phase 6.37 fix uses BIGSERIAL ids for management-data stale checks rather than conversation UUID rules', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /const expectedEntryId = String\(body\.existingEntryId \?\? ''\)\.trim\(\)/);
+  assert.match(source, /\/\^\\d\+\$\/\.test\(expectedEntryId\)/);
+  assert.doesNotMatch(source, /UUID\.test\(expectedEntryId\)/);
 });
