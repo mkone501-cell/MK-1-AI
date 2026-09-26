@@ -48,6 +48,7 @@ class PostgresManagementDataRepository {
           WHERE id = $1 AND owner_email = $2 AND business_key = $3
             AND data_date = $4::date AND metric_type = $5
             AND confirmed_by_owner = TRUE
+            AND superseded_by_management_data_id IS NULL
           FOR UPDATE
        ),
        updated AS (
@@ -89,7 +90,8 @@ class PostgresManagementDataRepository {
          FROM management_data
         WHERE owner_email = $1 AND business_key = $2 AND data_date = $3::date AND metric_type = $4
           AND confirmed_by_owner = TRUE
-        ORDER BY updated_at DESC, created_at DESC LIMIT 1`,
+          AND superseded_by_management_data_id IS NULL
+        ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 1`,
       [ownerEmail.trim(), query.businessKey, query.dataDate, query.metricType]
     );
     return result.rows[0] || null;
@@ -104,7 +106,8 @@ class PostgresManagementDataRepository {
          FROM management_data
         WHERE owner_email = $1 AND business_key = $2 AND data_date = $3::date
           AND confirmed_by_owner = TRUE
-        ORDER BY metric_type, updated_at DESC, created_at DESC`,
+          AND superseded_by_management_data_id IS NULL
+        ORDER BY metric_type, updated_at DESC, created_at DESC, id DESC`,
       [ownerEmail.trim(), query.businessKey, query.dataDate]
     );
     return result.rows || [];
@@ -117,13 +120,18 @@ class PostgresManagementDataRepository {
     const businessClause = businessKey ? ' AND business_key = $4' : '';
     if (businessKey) params.push(businessKey);
     const result = await this.pool.query(
-      `SELECT id, management_data_id, owner_email, business_key, data_date, metric_type,
-              previous_amount, new_amount, previous_currency, new_currency,
-              source, change_note, confirmed_by_owner, changed_at
-         FROM management_data_history
-        WHERE owner_email = $1 AND data_date = $2::date AND metric_type = $3
-          AND confirmed_by_owner = TRUE${businessClause}
-        ORDER BY changed_at ASC, id ASC
+      `SELECT history.id, history.management_data_id, history.owner_email, history.business_key,
+              history.data_date, history.metric_type, history.previous_amount, history.new_amount,
+              history.previous_currency, history.new_currency, history.source, history.change_note,
+              history.confirmed_by_owner, history.changed_at
+         FROM management_data_history AS history
+         JOIN management_data AS current ON current.id = history.management_data_id
+        WHERE history.owner_email = $1 AND history.data_date = $2::date AND history.metric_type = $3
+          AND history.confirmed_by_owner = TRUE${businessClause.replace(/business_key/g, 'history.business_key')}
+          AND current.owner_email = $1
+          AND current.confirmed_by_owner = TRUE
+          AND current.superseded_by_management_data_id IS NULL
+        ORDER BY history.changed_at ASC, history.id ASC
         LIMIT 100`,
       params
     );
@@ -138,6 +146,7 @@ class PostgresManagementDataRepository {
          FROM management_data
         WHERE owner_email = $1 AND business_key = $2
           AND confirmed_by_owner = TRUE
+          AND superseded_by_management_data_id IS NULL
         ORDER BY data_date ASC, metric_type ASC, updated_at ASC, id ASC`,
       [ownerEmail.trim(), businessKey.trim()]
     );
@@ -147,17 +156,116 @@ class PostgresManagementDataRepository {
     if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
     if (typeof businessKey !== 'string' || !businessKey.trim()) return [];
     const result = await this.pool.query(
-      `SELECT id, management_data_id, owner_email, business_key, data_date, metric_type,
-              previous_amount, new_amount, previous_currency, new_currency,
-              source, change_note, confirmed_by_owner, changed_at
-         FROM management_data_history
-        WHERE owner_email = $1 AND business_key = $2
-          AND confirmed_by_owner = TRUE
-        ORDER BY data_date ASC, metric_type ASC, changed_at ASC, id ASC`,
+      `SELECT history.id, history.management_data_id, history.owner_email, history.business_key,
+              history.data_date, history.metric_type, history.previous_amount, history.new_amount,
+              history.previous_currency, history.new_currency, history.source, history.change_note,
+              history.confirmed_by_owner, history.changed_at
+         FROM management_data_history AS history
+         JOIN management_data AS current ON current.id = history.management_data_id
+        WHERE history.owner_email = $1 AND history.business_key = $2
+          AND history.confirmed_by_owner = TRUE
+          AND current.owner_email = $1 AND current.business_key = $2
+          AND current.confirmed_by_owner = TRUE
+          AND current.superseded_by_management_data_id IS NULL
+        ORDER BY history.data_date ASC, history.metric_type ASC, history.changed_at ASC, history.id ASC`,
       [ownerEmail.trim(), businessKey.trim()]
     );
     return result.rows || [];
   }
+  async findDuplicateGroup(ownerEmail, query) {
+    if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
+    if (!query?.businessKey || !query?.dataDate || !query?.metricType) return [];
+    const result = await this.pool.query(
+      `SELECT id, owner_email, business_key, data_date, metric_type, amount, currency, note, source,
+              confirmed_by_owner, created_at, updated_at
+         FROM management_data
+        WHERE owner_email = $1 AND business_key = $2 AND data_date = $3::date AND metric_type = $4
+          AND confirmed_by_owner = TRUE
+          AND superseded_by_management_data_id IS NULL
+        ORDER BY updated_at DESC, created_at DESC, id DESC`,
+      [ownerEmail.trim(), query.businessKey, query.dataDate, query.metricType]
+    );
+    return result.rows || [];
+  }
+  async resolveDuplicateGroup(ownerEmail, input) {
+    if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
+    if (!input?.businessKey || !/^\d{4}-\d{2}-\d{2}$/.test(String(input.dataDate || '')) ||
+        !METRIC_TYPES.has(String(input.metricType || ''))) return null;
+    const keepEntryId = String(input.keepEntryId ?? '').trim();
+    const expectedRows = Array.isArray(input.expectedRows) ? input.expectedRows : [];
+    if (!/^\d+$/.test(keepEntryId) || expectedRows.length < 2) return null;
+    const normalized = [];
+    const seen = new Set();
+    for (const row of expectedRows) {
+      const id = String(row?.id ?? '').trim();
+      const amount = Number(row?.amount);
+      const currency = typeof row?.currency === 'string' ? row.currency.trim().toUpperCase() : '';
+      const date = new Date(row?.updatedAt);
+      if (!/^\d+$/.test(id) || seen.has(id) || !Number.isFinite(amount) ||
+          !/^[A-Z]{3,8}$/.test(currency) || Number.isNaN(date.getTime())) return null;
+      seen.add(id);
+      normalized.push({ id, amount, currency, updated_at:date.toISOString() });
+    }
+    if (!seen.has(keepEntryId)) return null;
+    const result = await this.pool.query(
+      `WITH expected AS (
+         SELECT id, amount, currency, updated_at
+           FROM jsonb_to_recordset($6::jsonb)
+             AS item(id BIGINT, amount NUMERIC(18,2), currency TEXT, updated_at TIMESTAMPTZ)
+       ),
+       locked AS (
+         SELECT id, amount, currency, updated_at
+           FROM management_data
+          WHERE owner_email = $1 AND business_key = $2
+            AND data_date = $3::date AND metric_type = $4
+            AND confirmed_by_owner = TRUE
+            AND superseded_by_management_data_id IS NULL
+          FOR UPDATE
+       ),
+       valid AS (
+         SELECT $5::BIGINT AS keep_id
+          WHERE (SELECT COUNT(*) FROM locked) >= 2
+            AND (SELECT COUNT(*) FROM locked) = (SELECT COUNT(*) FROM expected)
+            AND EXISTS (SELECT 1 FROM locked WHERE id = $5::BIGINT)
+            AND NOT EXISTS (
+              SELECT 1
+                FROM locked
+                FULL JOIN expected USING (id)
+               WHERE locked.id IS NULL OR expected.id IS NULL
+                  OR locked.amount IS DISTINCT FROM expected.amount
+                  OR BTRIM(UPPER(locked.currency)) IS DISTINCT FROM BTRIM(UPPER(expected.currency))
+                  OR locked.updated_at IS DISTINCT FROM expected.updated_at
+            )
+       ),
+       resolved AS (
+         UPDATE management_data AS current
+            SET superseded_by_management_data_id = valid.keep_id,
+                superseded_at = NOW(),
+                superseded_reason = 'owner confirmed duplicate resolution'
+           FROM valid
+          WHERE current.owner_email = $1
+            AND current.business_key = $2
+            AND current.data_date = $3::date
+            AND current.metric_type = $4
+            AND current.confirmed_by_owner = TRUE
+            AND current.superseded_by_management_data_id IS NULL
+            AND current.id <> valid.keep_id
+          RETURNING current.id
+       )
+       SELECT valid.keep_id, COUNT(resolved.id)::INT AS superseded_count
+         FROM valid
+         LEFT JOIN resolved ON TRUE
+        GROUP BY valid.keep_id`,
+      [
+        ownerEmail.trim(), input.businessKey, input.dataDate, input.metricType,
+        keepEntryId, JSON.stringify(normalized)
+      ]
+    );
+    const row = result.rows?.[0] || null;
+    if (!row || Number(row.superseded_count) !== normalized.length - 1) return null;
+    return { keepEntryId:String(row.keep_id), supersededCount:Number(row.superseded_count) };
+  }
+
   async findRange(ownerEmail, query) {
     if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
     if (!query?.businessKey || !query?.startDate || !query?.endDate) return [];
@@ -169,7 +277,8 @@ class PostgresManagementDataRepository {
         WHERE owner_email = $1 AND business_key = $2
           AND data_date BETWEEN $3::date AND $4::date
           AND confirmed_by_owner = TRUE
-        ORDER BY data_date, metric_type, updated_at DESC, created_at DESC`,
+          AND superseded_by_management_data_id IS NULL
+        ORDER BY data_date, metric_type, updated_at DESC, created_at DESC, id DESC`,
       [ownerEmail.trim(), query.businessKey, query.startDate, query.endDate]
     );
     return result.rows || [];
