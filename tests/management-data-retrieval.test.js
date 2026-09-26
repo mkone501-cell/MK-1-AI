@@ -810,3 +810,25 @@ test('Phase 6.28 period context exposes next required inputs after readiness', (
   assert.match(context.body, /2026-09-22の経費・利益を登録すると/);
   assert.match(context.body, /現金残高を1日分登録すると/);
 });
+
+
+test('Phase 6.29 fix routes focused daily sales analysis through daily_analysis', () => {
+  assert.deepEqual(
+    detectManagementDataQuery('2026年9月22日のNORTH STAR BEANSの売上推移を分析して'),
+    { businessKey:'north-star-beans', metricType:'daily_analysis', dataDate:'2026-09-22' }
+  );
+});
+
+test('Phase 6.29 fix routes focused daily profitability analysis through daily_analysis', () => {
+  assert.deepEqual(
+    detectManagementDataQuery('2026年9月22日のNORTH STAR BEANSの収益性と利益を分析して'),
+    { businessKey:'north-star-beans', metricType:'daily_analysis', dataDate:'2026-09-22' }
+  );
+});
+
+test('Phase 6.29 fix keeps plain daily metric fact lookup exact', () => {
+  assert.deepEqual(
+    detectManagementDataQuery('2026年9月22日のNORTH STAR BEANSの売上はいくらですか？'),
+    { businessKey:'north-star-beans', metricType:'revenue', dataDate:'2026-09-22' }
+  );
+});
