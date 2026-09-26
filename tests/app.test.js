@@ -249,3 +249,26 @@ test('サーバーの複数候補判定をUIへそのまま渡すと比較表示
   const escaped = memoryCandidateView({ ...candidate, existing:[{ title:'<script>x</script>', body:'<img src=x>', category:'店舗' }] });
   assert.doesNotMatch(escaped,/<script>|<img/);
 });
+
+
+test('Phase 6.38 fix prevents overlapping chat requests from replacing a pending management-data candidate', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, '../app.js'), 'utf8');
+  assert.match(source, /let chatRequestPending = false/);
+  assert.match(source, /conversationLoading \|\| newConversationPending \|\| chatRequestPending/);
+  assert.match(source, /chatRequestPending = true/);
+  assert.match(source, /finally \{\s*chatRequestPending = false;\s*render\(\);\s*\}/);
+  assert.match(source, /if \(!message\.trim\(\) \|\| chatRequestPending\) return/);
+  assert.match(source, /input\.value = ''/);
+});
+
+test('Phase 6.38 fix hydrates returned candidate lists even when conversationId is not used for the assignment guard', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, '../app.js'), 'utf8');
+  assert.match(source, /if \(serverConversation\) \{/);
+  assert.match(source, /if \(result\.conversationId\) activeConversationId = result\.conversationId/);
+  assert.match(source, /managementDataProposals = \(result\.managementDataCandidates \|\| \[\]\)/);
+  assert.doesNotMatch(source, /if \(serverConversation && result\.conversationId\) \{/);
+});

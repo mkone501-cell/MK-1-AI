@@ -48,6 +48,7 @@ let serverConversation = false;
 let activeConversationId = null;
 let conversationLoading = false;
 let newConversationPending = false;
+let chatRequestPending = false;
 let conversationGeneration = 0;
 let knowledgeItems = [];
 // Unapproved candidates stay in memory only; never localStorage or the knowledge DB.
@@ -111,7 +112,7 @@ function approvalMini(a) { return `<div class="approval-row"><span class="agent-
 function chart() { return `<div class="report-chart">${[38,48,42,62,58,78,88,76,96].map((h,i)=>`<div class="bar" style="height:${h}%"><span>${i+1}月</span></div>`).join('')}</div>`; }
 function empty(title,text) { return `<div class="empty">◌<b>${title}</b><span>${text}</span></div>`; }
 
-function chatView() { const waiting=conversationLoading || newConversationPending; return `<div class="chat-layout"><div class="card chat-card"><div class="chat-header"><span class="agent-icon">✦</span><div><strong>AI秘書 ミライ</strong><small style="display:block;color:var(--muted)"><span class="status-dot"></span>対応できます</small></div>${serverConversation ? `<button class="secondary" type="button" id="new-conversation" ${waiting ? 'disabled' : ''}>＋ 新しい会話</button>` : ''}</div><div class="messages" id="messages">${state.conversations.map(m=>`<div class="message ${m.role === 'user' ? 'user':''}"><div class="bubble">${safe(m.text)}</div></div>`).join('')}${serverConversation && !state.conversations.length ? '<div class="empty">新しい会話です。ミライへ質問してください。</div>' : ''}${serverConversation ? memoryProposals.map(memoryCandidateView).join('') + managementDataProposals.map(managementDataCandidateView).join('') : ''}</div><form class="composer" id="chat-form"><textarea id="chat-input" placeholder="ミライに相談する…" aria-label="メッセージ" ${waiting ? 'disabled' : ''} required></textarea><button type="submit" aria-label="送信" ${waiting ? 'disabled' : ''}>➤</button></form></div>
+function chatView() { const waiting=conversationLoading || newConversationPending || chatRequestPending; return `<div class="chat-layout"><div class="card chat-card"><div class="chat-header"><span class="agent-icon">✦</span><div><strong>AI秘書 ミライ</strong><small style="display:block;color:var(--muted)"><span class="status-dot"></span>対応できます</small></div>${serverConversation ? `<button class="secondary" type="button" id="new-conversation" ${waiting ? 'disabled' : ''}>＋ 新しい会話</button>` : ''}</div><div class="messages" id="messages">${state.conversations.map(m=>`<div class="message ${m.role === 'user' ? 'user':''}"><div class="bubble">${safe(m.text)}</div></div>`).join('')}${serverConversation && !state.conversations.length ? '<div class="empty">新しい会話です。ミライへ質問してください。</div>' : ''}${serverConversation ? memoryProposals.map(memoryCandidateView).join('') + managementDataProposals.map(managementDataCandidateView).join('') : ''}</div><form class="composer" id="chat-form"><textarea id="chat-input" placeholder="ミライに相談する…" aria-label="メッセージ" ${waiting ? 'disabled' : ''} required></textarea><button type="submit" aria-label="送信" ${waiting ? 'disabled' : ''}>➤</button></form></div>
   <div class="card suggestions"><h3>相談の例</h3><p style="font-size:12px;color:var(--muted)">押すと入力できます。</p>${['今月の広告結果はどう？','新しい広告動画を3案作って','Instagram広告を考えて','今、何を承認すればいい？'].map(x=>`<button data-suggestion="${x}">${x}</button>`).join('')}<div class="notice" style="margin-top:20px">ミライは提案と下書きを作ります。広告費の使用や外部公開は、代表の承認なしに実行しません。</div></div></div>`; }
 function projectsView() { return `<div class="page-head"><div><h2>案件一覧</h2><p>クライアントごとの仕事と進み具合を確認できます。</p></div><button class="primary" id="new-project">＋ 新しい案件（準備中）</button></div><div class="card table-card"><table><thead><tr><th>クライアント / 案件</th><th>目的</th><th>進み具合</th><th>状態</th><th></th></tr></thead><tbody>${state.projects.map(p=>{const c=state.clients.find(c=>c.id===p.clientId);return `<tr><td><span class="client-badge">NS</span><strong>${safe(c.name)}</strong><br><small>${safe(p.name)}</small></td><td>${safe(p.goal)}</td><td><div class="progress" style="width:120px"><i style="width:${p.progress}%"></i></div><small>${p.progress}%</small></td><td>${statusPill(p.status)}</td><td><button class="secondary" data-project="${p.id}">詳細を見る</button></td></tr>`}).join('')}</tbody></table></div>`; }
 function projectDetail(id) { const p=state.projects.find(x=>x.id===id)||state.projects[0], c=state.clients.find(x=>x.id===p.clientId); return `<div class="page-head"><div><button class="link-button" data-route="projects">← 案件一覧</button><h2>${safe(p.name)}</h2><p>${safe(c.name)} ・ ${safe(p.goal)}</p></div>${statusPill(p.status)}</div><div class="metrics">${metricCard('進み具合',`${p.progress}%`,'計画どおり進行中','◎')}${metricCard('作業中',`${state.tasks.filter(x=>x.status==='作業中').length}件`,'AIチームが対応中','✦')}${metricCard('広告案',`${state.adPlans.length}案`,'1案が承認待ち','◇')}${metricCard('今月の売上',yen(state.salesMetrics[0].revenue),'前月比 18.4%','¥')}</div><div class="dashboard-grid"><div class="card"><div class="section-head"><h3>この案件の作業</h3></div>${state.tasks.map(taskRow).join('')}</div><div class="card"><h3>案件情報</h3><p><small>クライアント</small><br><strong>${safe(c.name)}</strong></p><p><small>開始日</small><br><strong>${p.startedAt}</strong></p><p><small>目標</small><br><strong>${safe(p.goal)}</strong></p></div></div>`; }
@@ -271,28 +272,34 @@ async function requestMirai(message) {
 }
 
 async function handleChat(text) {
-  if (conversationLoading || newConversationPending) return;
+  if (conversationLoading || newConversationPending || chatRequestPending) return;
   const msg = text.trim(); if (!msg) return;
+  chatRequestPending = true;
   const generation = conversationGeneration;
   state.conversations.push({ id:`msg-${Date.now()}`, role:'user', text:msg, createdAt:new Date().toISOString() });
   saveState(); render();
-  let result;
-  try { result = await requestMirai(msg); }
-  catch {
-    if (!serverConversation) result = demoChatResult(msg);
-    else result = { answer:'会話を保存できませんでした。時間をおいてもう一度お試しください。' };
+  try {
+    let result;
+    try { result = await requestMirai(msg); }
+    catch {
+      if (!serverConversation) result = demoChatResult(msg);
+      else result = { answer:'会話を保存できませんでした。時間をおいてもう一度お試しください。' };
+    }
+    if (generation !== conversationGeneration) return;
+    if (serverConversation) {
+      if (result.conversationId) activeConversationId = result.conversationId;
+      // Replace the preceding turn's unapproved candidates; bound transient UI memory.
+      memoryProposals = (result.memoryCandidates || []).slice(0, 1).map(item => ({ ...item, id:String(++proposalSequence) }));
+      managementDataProposals = (result.managementDataCandidates || []).slice(0, 6).map(item => ({ ...item, id:`management-${++proposalSequence}` }));
+    }
+    if (result.mode === 'demo' && !result.task) result.task = demoChatResult(msg).task;
+    if (result.task) state.tasks.unshift(result.task);
+    state.conversations.push({ id:`msg-${Date.now()+1}`, role:'assistant', text:result.answer, createdAt:new Date().toISOString() });
+    saveState();
+  } finally {
+    chatRequestPending = false;
+    render();
   }
-  if (generation !== conversationGeneration) return;
-  if (serverConversation && result.conversationId) {
-    activeConversationId = result.conversationId;
-    // Replace the preceding turn's unapproved candidates; bound transient UI memory.
-    memoryProposals = (result.memoryCandidates || []).slice(0, 1).map(item => ({ ...item, id:String(++proposalSequence) }));
-    managementDataProposals = (result.managementDataCandidates || []).slice(0, 6).map(item => ({ ...item, id:`management-${++proposalSequence}` }));
-  }
-  if (result.mode === 'demo' && !result.task) result.task = demoChatResult(msg).task;
-  if (result.task) state.tasks.unshift(result.task);
-  state.conversations.push({ id:`msg-${Date.now()+1}`, role:'assistant', text:result.answer, createdAt:new Date().toISOString() });
-  saveState(); render();
 }
 
 async function startNewConversation() {
@@ -469,7 +476,14 @@ document.addEventListener('click', e => {
 
 });
 document.addEventListener('submit', e => {
-  if(e.target.id==='chat-form') { e.preventDefault(); handleChat(document.querySelector('#chat-input').value); }
+  if(e.target.id==='chat-form') {
+    e.preventDefault();
+    const input = document.querySelector('#chat-input');
+    const message = input.value;
+    if (!message.trim() || chatRequestPending) return;
+    input.value = '';
+    handleChat(message);
+  }
   if(e.target.id==='settings-form') { e.preventDefault(); const data=new FormData(e.target); state.settings.companyName=data.get('companyName'); state.settings.ownerName=data.get('ownerName'); saveState(); showToast('設定を保存しました。'); }
   if(e.target.id==='knowledge-form') { e.preventDefault(); return saveKnowledge(e.target).catch(error=>showToast(error.message)); }
 });
