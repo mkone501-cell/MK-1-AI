@@ -596,3 +596,24 @@ test('Phase 6.44 does not claim consistency when there is no change history', ()
 
   assert.match(answer, /変更履歴がないため履歴との一致は判定できません/);
 });
+
+
+test('Phase 6.44 keeps the target after current-value and last-change follow-ups', () => {
+  const history = [
+    { role:'user', content:'2026年8月15日のNORTH STAR BEANSの売上を最初の値に戻して' },
+    { role:'assistant', content:'復元しました。' },
+    { role:'user', content:'今の売上はいくら？' },
+    { role:'assistant', content:'現在の登録売上は125,000円です。' },
+    { role:'user', content:'最後にいつ変更した？' },
+    { role:'assistant', content:'最後の変更は2026/09/26 23:44です。' }
+  ];
+
+  assert.deepEqual(
+    detectManagementDataHistoryConsistencyQuery('この売上データは履歴と一致してる？', history),
+    {
+      businessKey:'north-star-beans',
+      dataDate:'2026-08-15',
+      metricType:'revenue'
+    }
+  );
+});
