@@ -21,7 +21,7 @@ const { proposeMemory } = require('./knowledge/update-candidates');
 const { detectManagementDataCandidate, detectManagementDataCandidates, isSameManagementDataValue, managementDataCandidateAcknowledgement } = require('./management-data/candidates');
 const { PostgresManagementDataRepository } = require('./management-data/postgres-management-data-repository');
 const { migrateManagementData } = require('./management-data/migrate-management-data');
-const { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, managementDataHistoryAnswer, detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
+const { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, detectManagementDataHistoryConsistencyQuery, managementDataHistoryConsistencyAnswer, managementDataHistoryAnswer, detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
 
 const ROOT = path.resolve(__dirname, '..');
 const MAX_BODY_BYTES = 32 * 1024;
@@ -555,7 +555,32 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'経営数値の現在値・変更日時を確認できませんでした。時間をおいてお試しください。' });
               }
             }
-            const historyQuery = restoreQuery || currentStateQuery ? null : (detectManagementDataHistoryQuery(message)
+            const consistencyQuery = restoreQuery || currentStateQuery
+              ? null
+              : detectManagementDataHistoryConsistencyQuery(message, history);
+            if (consistencyQuery) {
+              try {
+                const consistencyHistoryEntries = await managementData.findHistory(auth.ownerEmail, consistencyQuery);
+                const consistencyBusinessKeys = [...new Set(consistencyHistoryEntries.map(entry => String(entry.business_key || '').trim()).filter(Boolean))];
+                if (!consistencyQuery.businessKey && consistencyBusinessKeys.length > 1) {
+                  managementDataDirectAnswer = '同じ日・同じ項目に複数事業のデータがあります。履歴との整合性を確認する事業名を指定してください。';
+                } else {
+                  const resolvedConsistencyQuery = consistencyQuery.businessKey
+                    ? consistencyQuery
+                    : consistencyBusinessKeys.length === 1 ? { ...consistencyQuery, businessKey:consistencyBusinessKeys[0] } : null;
+                  if (!resolvedConsistencyQuery) {
+                    managementDataDirectAnswer = '対象事業を安全に特定できません。事業名を含めて履歴との一致を確認してください。';
+                  } else {
+                    const consistencyCurrentEntry = await managementData.findExact(auth.ownerEmail, resolvedConsistencyQuery);
+                    managementDataDirectAnswer = managementDataHistoryConsistencyAnswer(consistencyCurrentEntry, consistencyHistoryEntries, resolvedConsistencyQuery);
+                  }
+                }
+              } catch {
+                logger.error('management_data.history_consistency_failed');
+                return respondJson(req, res, 503, { error:'経営数値と変更履歴の整合性を確認できませんでした。時間をおいてお試しください。' });
+              }
+            }
+            const historyQuery = restoreQuery || currentStateQuery || consistencyQuery ? null : (detectManagementDataHistoryQuery(message)
               || detectManagementDataHistoryFollowUp(message, history));
             if (historyQuery) {
               try {

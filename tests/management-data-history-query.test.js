@@ -9,6 +9,8 @@ const {
   detectManagementDataRestoreRequest,
   detectManagementDataCurrentStateQuery,
   managementDataCurrentStateAnswer,
+  detectManagementDataHistoryConsistencyQuery,
+  managementDataHistoryConsistencyAnswer,
   managementDataHistoryAnswer
 } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
@@ -448,4 +450,170 @@ test('Phase 6.43 says so when the current row exists but no change history has b
   });
   assert.match(answer, /現在の登録売上は125,000円/);
   assert.match(answer, /保存されている変更履歴がありません/);
+});
+
+
+test('Phase 6.44 resolves 「この売上データは履歴と一致してる？」 from recent management context', () => {
+  const history = [
+    { role:'user', content:'2026年8月15日のNORTH STAR BEANSの売上を最初の値に戻して' },
+    { role:'assistant', content:'復元しました。' },
+    { role:'user', content:'今の売上はいくら？' },
+    { role:'assistant', content:'現在の登録売上は125,000円です。' }
+  ];
+  assert.deepEqual(
+    detectManagementDataHistoryConsistencyQuery('この売上データは履歴と一致してる？', history),
+    {
+      businessKey:'north-star-beans',
+      dataDate:'2026-08-15',
+      metricType:'revenue'
+    }
+  );
+});
+
+test('Phase 6.44 supports an explicit dated history-consistency question', () => {
+  assert.deepEqual(
+    detectManagementDataHistoryConsistencyQuery('2026年8月15日のNORTH STAR BEANSの売上は変更履歴と一致していますか？', []),
+    {
+      businessKey:'north-star-beans',
+      dataDate:'2026-08-15',
+      metricType:'revenue'
+    }
+  );
+});
+
+test('Phase 6.44 does not guess a consistency target without explicit or recent management context', () => {
+  assert.equal(
+    detectManagementDataHistoryConsistencyQuery('この売上データは履歴と一致してる？', []),
+    null
+  );
+});
+
+test('Phase 6.44 reports a fully continuous matching audit chain as consistent', () => {
+  const answer = managementDataHistoryConsistencyAnswer({
+    id:'44',
+    business_key:'north-star-beans',
+    amount:'125000.00',
+    currency:'JPY'
+  }, [
+    {
+      management_data_id:'44',
+      business_key:'north-star-beans',
+      previous_amount:'125000.00',
+      new_amount:'126000.00',
+      previous_currency:'JPY',
+      new_currency:'JPY'
+    },
+    {
+      management_data_id:'44',
+      business_key:'north-star-beans',
+      previous_amount:'126000.00',
+      new_amount:'125000.00',
+      previous_currency:'JPY',
+      new_currency:'JPY'
+    }
+  ], {
+    businessKey:'north-star-beans',
+    dataDate:'2026-08-15',
+    metricType:'revenue'
+  });
+
+  assert.match(answer, /履歴と一致しています/);
+  assert.match(answer, /現在値125,000円/);
+  assert.match(answer, /最新履歴の変更後の値125,000円/);
+  assert.match(answer, /履歴2件のつながりにも不整合はありません/);
+});
+
+test('Phase 6.44 detects when the current value differs from the latest audit value', () => {
+  const answer = managementDataHistoryConsistencyAnswer({
+    id:'44',
+    business_key:'north-star-beans',
+    amount:'124000.00',
+    currency:'JPY'
+  }, [
+    {
+      management_data_id:'44',
+      business_key:'north-star-beans',
+      previous_amount:'126000.00',
+      new_amount:'125000.00',
+      previous_currency:'JPY',
+      new_currency:'JPY'
+    }
+  ], {
+    businessKey:'north-star-beans',
+    dataDate:'2026-08-15',
+    metricType:'revenue'
+  });
+
+  assert.match(answer, /履歴との不整合があります/);
+  assert.match(answer, /現在値124,000円と最新履歴の変更後の値125,000円が一致していません/);
+  assert.match(answer, /自動修正はしていません/);
+});
+
+test('Phase 6.44 detects a broken audit chain even when the latest value matches the current row', () => {
+  const answer = managementDataHistoryConsistencyAnswer({
+    id:'44',
+    business_key:'north-star-beans',
+    amount:'125000.00',
+    currency:'JPY'
+  }, [
+    {
+      management_data_id:'44',
+      business_key:'north-star-beans',
+      previous_amount:'125000.00',
+      new_amount:'126000.00',
+      previous_currency:'JPY',
+      new_currency:'JPY'
+    },
+    {
+      management_data_id:'44',
+      business_key:'north-star-beans',
+      previous_amount:'127000.00',
+      new_amount:'125000.00',
+      previous_currency:'JPY',
+      new_currency:'JPY'
+    }
+  ], {
+    businessKey:'north-star-beans',
+    dataDate:'2026-08-15',
+    metricType:'revenue'
+  });
+
+  assert.match(answer, /履歴との不整合があります/);
+  assert.match(answer, /履歴1件目から2件目の値が連続していません/);
+});
+
+test('Phase 6.44 does not claim consistency when there is no change history', () => {
+  const answer = managementDataHistoryConsistencyAnswer({
+    id:'44',
+    business_key:'north-star-beans',
+    amount:'125000.00',
+    currency:'JPY'
+  }, [], {
+    businessKey:'north-star-beans',
+    dataDate:'2026-08-15',
+    metricType:'revenue'
+  });
+
+  assert.match(answer, /変更履歴がないため履歴との一致は判定できません/);
+});
+
+
+test('Phase 6.44 keeps the target after current-value and last-change follow-ups', () => {
+  const history = [
+    { role:'user', content:'2026年8月15日のNORTH STAR BEANSの売上を最初の値に戻して' },
+    { role:'assistant', content:'復元しました。' },
+    { role:'user', content:'今の売上はいくら？' },
+    { role:'assistant', content:'現在の登録売上は125,000円です。' },
+    { role:'user', content:'最後にいつ変更した？' },
+    { role:'assistant', content:'最後の変更は2026/09/26 23:44です。' }
+  ];
+
+  assert.deepEqual(
+    detectManagementDataHistoryConsistencyQuery('この売上データは履歴と一致してる？', history),
+    {
+      businessKey:'north-star-beans',
+      dataDate:'2026-08-15',
+      metricType:'revenue'
+    }
+  );
 });

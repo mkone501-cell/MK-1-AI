@@ -351,6 +351,103 @@ function detectManagementDataCurrentStateQuery(message, history = []) {
   };
 }
 
+function detectManagementDataHistoryConsistencyQuery(message, history = []) {
+  const text = String(message || '').trim();
+  if (!text) return null;
+
+  const asksHistoryConsistency = /(?:変更履歴|更新履歴|訂正履歴|監査履歴|履歴)[^。！？\n]{0,28}(?:一致|整合|食い違|ずれ|ズレ|矛盾|合って|正しい)/.test(text)
+    || /(?:一致|整合|食い違|ずれ|ズレ|矛盾|合って|正しい)[^。！？\n]{0,28}(?:変更履歴|更新履歴|訂正履歴|監査履歴|履歴)/.test(text);
+  if (!asksHistoryConsistency) return null;
+
+  const direct = managementTargetFromExplicitMessage(text);
+  // Consistency checks are read-only, so a slightly wider window is safe and
+  // lets follow-ups work after "今の売上" and "最後にいつ変更した" have already
+  // consumed a few turns. We still require a concrete dated management target.
+  const recentTurns = Array.isArray(history) ? history.slice(-8) : [];
+  let contextualTarget = null;
+  for (let index = recentTurns.length - 1; index >= 0; index--) {
+    const turn = recentTurns[index];
+    if (!turn || turn.role !== 'user') continue;
+    const target = managementTargetFromExplicitMessage(turn.content);
+    if (!target) continue;
+    contextualTarget = target;
+    break;
+  }
+
+  let target = direct || contextualTarget;
+  if (direct && contextualTarget &&
+      direct.dataDate === contextualTarget.dataDate &&
+      direct.metricType === contextualTarget.metricType &&
+      !direct.businessKey && contextualTarget.businessKey) {
+    target = { ...direct, businessKey:contextualTarget.businessKey };
+  }
+  if (!target?.dataDate || !target?.metricType) return null;
+
+  return {
+    businessKey:target.businessKey || null,
+    dataDate:target.dataDate,
+    metricType:target.metricType
+  };
+}
+
+function managementDataHistoryConsistencyAnswer(currentEntry, historyEntries, query = {}) {
+  const rows = (Array.isArray(historyEntries) ? historyEntries : []).filter(Boolean);
+  const businessKeys = [...new Set(rows.map(row => String(row.business_key || '').trim()).filter(Boolean))];
+  const businessKey = query.businessKey || currentEntry?.business_key || (businessKeys.length === 1 ? businessKeys[0] : null);
+  const businessName = businessKey === 'north-star-beans' ? 'NORTH STAR BEANS' : businessKey || '対象事業';
+  const metricNames = { revenue:'売上', expense:'経費', profit:'利益', customers:'来客数', average_spend:'客単価', cash_balance:'現金残高' };
+  const metricName = metricNames[query.metricType] || query.metricType || '経営数値';
+  const dateLabel = String(query.dataDate || '').replace(/^(\d{4})-(\d{2})-(\d{2})$/, (_, y, m, d) => `${Number(y)}年${Number(m)}月${Number(d)}日`);
+  const subject = `${dateLabel}の${businessName}の${metricName}`;
+
+  if (!currentEntry && !rows.length) {
+    return `${subject}は、現在の本人確認済み登録値も変更履歴もないため、整合性を確認できません。`;
+  }
+
+  if (!currentEntry) {
+    const latest = rows.at(-1);
+    const latestValue = formatManagementHistoryValue(latest?.new_amount, latest?.new_currency) || '不明';
+    return `${subject}は履歴と一致していません。変更履歴の最新値は${latestValue}ですが、現在の本人確認済み登録値がありません。自動修正はしていません。`;
+  }
+
+  const currentValue = formatManagementHistoryValue(currentEntry.amount, currentEntry.currency) || '不明';
+  if (!rows.length) {
+    return `${subject}の現在値は${currentValue}ですが、変更履歴がないため履歴との一致は判定できません。`;
+  }
+
+  const latest = rows.at(-1);
+  const latestValue = formatManagementHistoryValue(latest.new_amount, latest.new_currency) || '不明';
+  const sameLatestValue = Number(currentEntry.amount) === Number(latest.new_amount)
+    && String(currentEntry.currency || '').trim().toUpperCase() === String(latest.new_currency || '').trim().toUpperCase();
+  const sameEntity = String(currentEntry.id ?? '') === String(latest.management_data_id ?? '');
+
+  const chainIssues = [];
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index];
+    if (String(row.management_data_id ?? '') !== String(currentEntry.id ?? '')) {
+      chainIssues.push(`履歴${index + 1}件目が現在の登録行とは異なる管理IDを参照しています`);
+    }
+    if (index === 0) continue;
+    const previous = rows[index - 1];
+    const amountContinues = Number(previous.new_amount) === Number(row.previous_amount);
+    const currencyContinues = String(previous.new_currency || '').trim().toUpperCase() === String(row.previous_currency || '').trim().toUpperCase();
+    if (!amountContinues || !currencyContinues) {
+      chainIssues.push(`履歴${index}件目から${index + 1}件目の値が連続していません`);
+    }
+  }
+
+  if (sameLatestValue && sameEntity && !chainIssues.length) {
+    return `${subject}は履歴と一致しています。現在値${currentValue}と、最新履歴の変更後の値${latestValue}が一致し、履歴${rows.length}件のつながりにも不整合はありません。`;
+  }
+
+  const issues = [];
+  if (!sameLatestValue) issues.push(`現在値${currentValue}と最新履歴の変更後の値${latestValue}が一致していません`);
+  if (!sameEntity) issues.push('最新履歴が現在の登録行とは異なる管理IDを参照しています');
+  issues.push(...chainIssues.filter((item, index, list) => list.indexOf(item) === index));
+
+  return `${subject}には履歴との不整合があります。\n- ${issues.join('\n- ')}\n自動修正はしていません。`;
+}
+
 function managementDataCurrentStateAnswer(currentEntry, historyEntries, query = {}) {
   const rows = (Array.isArray(historyEntries) ? historyEntries : []).filter(Boolean);
   const businessKeys = [...new Set(rows.map(row => String(row.business_key || '').trim()).filter(Boolean))];
@@ -1151,4 +1248,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, managementDataHistoryAnswer, formatManagementHistoryValue, formatManagementHistoryChangedAt, detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, detectManagementDataHistoryConsistencyQuery, managementDataHistoryConsistencyAnswer, managementDataHistoryAnswer, formatManagementHistoryValue, formatManagementHistoryChangedAt, detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
