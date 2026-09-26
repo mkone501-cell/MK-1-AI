@@ -133,3 +133,30 @@ test('Phase 6.36 can report duplicates while preserving genuinely new bundled ca
   assert.match(answer, /保存候補を2件作成しました/);
   assert.match(answer, /まだ保存していません/);
 });
+
+
+test('Phase 6.37 describes a changed existing value as an update candidate, not a save candidate', () => {
+  const item = {
+    ...detectManagementDataCandidate('2026年8月15日のNORTH STAR BEANSの売上は126000円です'),
+    operation:'update',
+    existingEntryId:'11111111-1111-4111-8111-111111111111',
+    previousAmount:125000,
+    previousCurrency:'JPY'
+  };
+  const answer = managementDataCandidateAcknowledgement([item]);
+  assert.match(answer, /更新候補を作成しました/);
+  assert.match(answer, /まだ更新していません/);
+  assert.match(answer, /「確認して更新」を押した場合だけ更新します/);
+  assert.doesNotMatch(answer, /確認して保存/);
+});
+
+test('Phase 6.37 distinguishes mixed new-save and update candidates', () => {
+  const base = detectManagementDataCandidates('2026年9月22日のNORTH STAR BEANSの売上は160000円、来客数は80人でした。');
+  const items = [
+    { ...base[0], operation:'update', existingEntryId:'11111111-1111-4111-8111-111111111111', previousAmount:150000, previousCurrency:'JPY' },
+    { ...base[1], operation:'create' }
+  ];
+  const answer = managementDataCandidateAcknowledgement(items);
+  assert.match(answer, /新規保存候補を1件、更新候補を1件/);
+  assert.match(answer, /まだ保存・更新していません/);
+});
