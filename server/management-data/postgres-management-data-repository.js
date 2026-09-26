@@ -109,6 +109,26 @@ class PostgresManagementDataRepository {
     );
     return result.rows || [];
   }
+  async findHistory(ownerEmail, query) {
+    if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
+    if (!query?.dataDate || !query?.metricType) return [];
+    const businessKey = typeof query.businessKey === 'string' && query.businessKey.trim() ? query.businessKey.trim() : null;
+    const params = [ownerEmail.trim(), query.dataDate, query.metricType];
+    const businessClause = businessKey ? ' AND business_key = $4' : '';
+    if (businessKey) params.push(businessKey);
+    const result = await this.pool.query(
+      `SELECT id, management_data_id, owner_email, business_key, data_date, metric_type,
+              previous_amount, new_amount, previous_currency, new_currency,
+              source, change_note, confirmed_by_owner, changed_at
+         FROM management_data_history
+        WHERE owner_email = $1 AND data_date = $2::date AND metric_type = $3
+          AND confirmed_by_owner = TRUE${businessClause}
+        ORDER BY changed_at ASC, id ASC
+        LIMIT 100`,
+      params
+    );
+    return result.rows || [];
+  }
   async findRange(ownerEmail, query) {
     if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
     if (!query?.businessKey || !query?.startDate || !query?.endDate) return [];
