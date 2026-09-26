@@ -7,6 +7,8 @@ const {
   detectManagementDataHistoryFollowUp,
   isInitialManagementDataRestorePhrase,
   detectManagementDataRestoreRequest,
+  detectManagementDataCurrentStateQuery,
+  managementDataCurrentStateAnswer,
   managementDataHistoryAnswer
 } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
@@ -340,4 +342,110 @@ test('Phase 6.42 history details identify an owner-confirmed history restore wit
   assert.match(answer, /変更者：オーナー本人/);
   assert.match(answer, /変更履歴から最初の値へ復元/);
   assert.match(answer, /確認時の入力文：「最初の値に戻して」/);
+});
+
+
+test('Phase 6.43 resolves 「今の売上はいくら？」 from the recent explicit restore target', () => {
+  const history = [
+    { role:'user', content:'2026年8月15日のNORTH STAR BEANSの売上を最初の値に戻して' },
+    { role:'assistant', content:'変更履歴から最初の値への復元候補を作成しました。' }
+  ];
+  assert.deepEqual(
+    detectManagementDataCurrentStateQuery('今の売上はいくら？', history),
+    {
+      businessKey:'north-star-beans',
+      dataDate:'2026-08-15',
+      metricType:'revenue',
+      includeCurrentValue:true,
+      includeLastChangedAt:false
+    }
+  );
+});
+
+test('Phase 6.43 resolves 「最後にいつ変更した？」 from the same recent management target', () => {
+  const history = [
+    { role:'user', content:'2026年8月15日のNORTH STAR BEANSの売上を最初の値に戻して' },
+    { role:'assistant', content:'復元しました。' },
+    { role:'user', content:'今の売上はいくら？' },
+    { role:'assistant', content:'現在の登録売上は125,000円です。' }
+  ];
+  assert.deepEqual(
+    detectManagementDataCurrentStateQuery('最後にいつ変更した？', history),
+    {
+      businessKey:'north-star-beans',
+      dataDate:'2026-08-15',
+      metricType:'revenue',
+      includeCurrentValue:false,
+      includeLastChangedAt:true
+    }
+  );
+});
+
+test('Phase 6.43 supports an explicit dated current-value question without conversation context', () => {
+  assert.deepEqual(
+    detectManagementDataCurrentStateQuery('2026年8月15日のNORTH STAR BEANSの現在の売上はいくらですか？', []),
+    {
+      businessKey:'north-star-beans',
+      dataDate:'2026-08-15',
+      metricType:'revenue',
+      includeCurrentValue:true,
+      includeLastChangedAt:false
+    }
+  );
+});
+
+test('Phase 6.43 does not guess current state when there is no explicit or recent management target', () => {
+  assert.equal(detectManagementDataCurrentStateQuery('今の売上はいくら？', []), null);
+  assert.equal(detectManagementDataCurrentStateQuery('最後にいつ変更した？', []), null);
+});
+
+test('Phase 6.43 answers current value from the confirmed row and last change from the newest audit row', () => {
+  const answer = managementDataCurrentStateAnswer({
+    business_key:'north-star-beans',
+    amount:'125000.00',
+    currency:'JPY'
+  }, [
+    {
+      business_key:'north-star-beans',
+      previous_amount:'125000.00',
+      new_amount:'126000.00',
+      previous_currency:'JPY',
+      new_currency:'JPY',
+      changed_at:'2026-09-26T12:51:00.000Z'
+    },
+    {
+      business_key:'north-star-beans',
+      previous_amount:'126000.00',
+      new_amount:'125000.00',
+      previous_currency:'JPY',
+      new_currency:'JPY',
+      changed_at:'2026-09-26T13:30:00.000Z'
+    }
+  ], {
+    businessKey:'north-star-beans',
+    dataDate:'2026-08-15',
+    metricType:'revenue',
+    includeCurrentValue:true,
+    includeLastChangedAt:true
+  });
+
+  assert.match(answer, /現在の登録売上は125,000円/);
+  assert.match(answer, /最後の変更は2026\/09\/26 22:30/);
+  assert.match(answer, /126,000円 → 125,000円/);
+});
+
+test('Phase 6.43 says so when the current row exists but no change history has been recorded', () => {
+  const answer = managementDataCurrentStateAnswer({
+    business_key:'north-star-beans',
+    amount:'125000.00',
+    currency:'JPY'
+  }, [], {
+    businessKey:'north-star-beans',
+    dataDate:'2026-08-15',
+    metricType:'revenue',
+    includeCurrentValue:true,
+    includeLastChangedAt:true
+  });
+  assert.match(answer, /現在の登録売上は125,000円/);
+  assert.match(answer, /保存されている変更履歴がありません/);
 });
