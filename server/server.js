@@ -21,7 +21,7 @@ const { proposeMemory } = require('./knowledge/update-candidates');
 const { detectManagementDataCandidate, detectManagementDataCandidates, isSameManagementDataValue, managementDataCandidateAcknowledgement } = require('./management-data/candidates');
 const { PostgresManagementDataRepository } = require('./management-data/postgres-management-data-repository');
 const { migrateManagementData } = require('./management-data/migrate-management-data');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
+const { detectManagementDataHistoryQuery, managementDataHistoryAnswer, detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
 
 const ROOT = path.resolve(__dirname, '..');
 const MAX_BODY_BYTES = 32 * 1024;
@@ -424,7 +424,29 @@ function createApplication(options = {}) {
               return respondJson(req, res, 503, { error:'既存の経営数値を確認できませんでした。時間をおいてお試しください。' });
             }
           }
+          let managementDataDirectAnswer = null;
           if (managementData) {
+            const historyQuery = detectManagementDataHistoryQuery(message);
+            if (historyQuery) {
+              try {
+                const historyEntries = await managementData.findHistory(auth.ownerEmail, historyQuery);
+                const historyBusinessKeys = [...new Set(historyEntries.map(entry => String(entry.business_key || '').trim()).filter(Boolean))];
+                let resolvedHistoryQuery = historyQuery;
+                let currentHistoryEntry = null;
+                if (historyQuery.businessKey) {
+                  currentHistoryEntry = await managementData.findExact(auth.ownerEmail, historyQuery);
+                } else if (historyBusinessKeys.length === 1) {
+                  resolvedHistoryQuery = { ...historyQuery, businessKey:historyBusinessKeys[0] };
+                  currentHistoryEntry = await managementData.findExact(auth.ownerEmail, resolvedHistoryQuery);
+                }
+                managementDataDirectAnswer = managementDataHistoryAnswer(historyEntries, currentHistoryEntry, resolvedHistoryQuery);
+              } catch {
+                logger.error('management_data.history_search_failed');
+                return respondJson(req, res, 503, { error:'経営数値の変更履歴を確認できませんでした。時間をおいてお試しください。' });
+              }
+            }
+          }
+          if (managementData && !managementDataDirectAnswer) {
             const managementQuery = detectManagementDataQuery(message);
             if (managementQuery) {
               try {
@@ -526,7 +548,9 @@ function createApplication(options = {}) {
               }
             }
           }
-          let result = await mirai.reply({ message, history:replyHistory, knowledge:selectedKnowledge });
+          let result = managementDataDirectAnswer
+            ? { answer:managementDataDirectAnswer, mode:'server', approval:null }
+            : await mirai.reply({ message, history:replyHistory, knowledge:selectedKnowledge });
           if (managementDataCandidates.length || managementDataDuplicateCount) {
             result = { ...result, answer:managementDataCandidateAcknowledgement(managementDataCandidates, managementDataDuplicateCount) };
           }

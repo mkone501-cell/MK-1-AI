@@ -121,3 +121,21 @@ test('Phase 6.38 runs the management-data history migration and audits confirmed
   assert.match(repositorySource, /new_amount/);
   assert.match(repositorySource, /changed_at/);
 });
+
+
+test('Phase 6.39 routes management-data history questions to the audit log and deterministic server answer', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /detectManagementDataHistoryQuery\(message\)/);
+  assert.match(source, /managementData\.findHistory\(auth\.ownerEmail, historyQuery\)/);
+  assert.match(source, /managementDataHistoryAnswer\(historyEntries, currentHistoryEntry, resolvedHistoryQuery\)/);
+  assert.match(source, /managementData && !managementDataDirectAnswer/);
+  assert.match(source, /\{ answer:managementDataDirectAnswer, mode:'server', approval:null \}/);
+});
+
+test('Phase 6.39 keeps history lookup owner-scoped and read-only', () => {
+  const repositorySource = fs.readFileSync(path.join(__dirname, '../server/management-data/postgres-management-data-repository.js'), 'utf8');
+  assert.match(repositorySource, /async findHistory\(ownerEmail, query\)/);
+  assert.match(repositorySource, /FROM management_data_history/);
+  assert.match(repositorySource, /WHERE owner_email = \$1/);
+  assert.match(repositorySource, /ORDER BY changed_at ASC, id ASC/);
+});
