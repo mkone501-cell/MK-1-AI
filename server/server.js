@@ -18,7 +18,7 @@ const { migrateKnowledge } = require('./knowledge/migrate-knowledge');
 const { validateKnowledge } = require('./knowledge/validation');
 const { knowledgeContext } = require('./knowledge/context');
 const { proposeMemory } = require('./knowledge/update-candidates');
-const { detectManagementDataCandidate, detectManagementDataCandidates, managementDataCandidateAcknowledgement } = require('./management-data/candidates');
+const { detectManagementDataCandidate, detectManagementDataCandidates, isSameManagementDataValue, managementDataCandidateAcknowledgement } = require('./management-data/candidates');
 const { PostgresManagementDataRepository } = require('./management-data/postgres-management-data-repository');
 const { migrateManagementData } = require('./management-data/migrate-management-data');
 const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
@@ -318,6 +318,10 @@ function createApplication(options = {}) {
         if (!candidate) {
           return respondJson(req, res, 409, { error:'事業・日付・数値を安全に確認できません。もう一度会話から入力してください。' });
         }
+        const existing = await managementData.findExact(auth.ownerEmail, candidate);
+        if (isSameManagementDataValue(existing, candidate)) {
+          return respondJson(req, res, 200, { managementData:existing, duplicate:true });
+        }
         const saved = await managementData.create(auth.ownerEmail, {
           ...candidate,
           confirmed:true,
@@ -364,7 +368,27 @@ function createApplication(options = {}) {
             try { proposals = await proposeMemory(message, knowledge, session.user.id, config, req); }
             catch { logger.error('knowledge.candidate_failed'); return respondJson(req, res, 503, { error:'既存の経営知識を確認できませんでした。時間をおいてお試しください。' }); }
           }
-          const managementDataCandidates = detectManagementDataCandidates(message);
+          let managementDataCandidates = detectManagementDataCandidates(message);
+          let managementDataDuplicateCount = 0;
+          if (managementData && managementDataCandidates.length) {
+            try {
+              const pendingCandidates = [];
+              for (const candidate of managementDataCandidates) {
+                if (candidate.businessKey && candidate.dataDate) {
+                  const existing = await managementData.findExact(auth.ownerEmail, candidate);
+                  if (isSameManagementDataValue(existing, candidate)) {
+                    managementDataDuplicateCount++;
+                    continue;
+                  }
+                }
+                pendingCandidates.push(candidate);
+              }
+              managementDataCandidates = pendingCandidates;
+            } catch {
+              logger.error('management_data.duplicate_check_failed');
+              return respondJson(req, res, 503, { error:'既存の経営数値を確認できませんでした。時間をおいてお試しください。' });
+            }
+          }
           if (managementData) {
             const managementQuery = detectManagementDataQuery(message);
             if (managementQuery) {
@@ -468,8 +492,8 @@ function createApplication(options = {}) {
             }
           }
           let result = await mirai.reply({ message, history:replyHistory, knowledge:selectedKnowledge });
-          if (managementDataCandidates.length) {
-            result = { ...result, answer:managementDataCandidateAcknowledgement(managementDataCandidates) };
+          if (managementDataCandidates.length || managementDataDuplicateCount) {
+            result = { ...result, answer:managementDataCandidateAcknowledgement(managementDataCandidates, managementDataDuplicateCount) };
           }
           if (typeof result.answer !== 'string' || containsSecret(result.answer, config, req)) {
             logger.error('conversation.answer_rejected');
