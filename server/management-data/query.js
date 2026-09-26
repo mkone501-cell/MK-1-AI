@@ -227,7 +227,7 @@ function managementHistoryActor(row) {
 function managementHistoryReason(row) {
   const source = String(row?.source || '').trim();
   if (source === 'owner confirmed correction') {
-    return 'オーナーが会話内容を確認し、訂正として更新しました。';
+    return '記録上は「オーナー確認による訂正」です。具体的な訂正理由は記録されていません。';
   }
   if (source === 'owner confirmed conversation') {
     return 'オーナーが会話内容を確認して保存しました。';
