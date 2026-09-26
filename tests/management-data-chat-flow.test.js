@@ -193,7 +193,7 @@ test('Phase 6.43 routes current-value and last-change questions to deterministic
   assert.match(source, /managementData\.findHistory\(auth\.ownerEmail, currentStateQuery\)/);
   assert.match(source, /managementData\.findExact\(auth\.ownerEmail, resolvedStateQuery\)/);
   assert.match(source, /managementDataCurrentStateAnswer\(currentStateEntry, stateHistoryEntries, resolvedStateQuery\)/);
-  assert.match(source, /restoreQuery \|\| currentStateQuery \|\| businessAuditQuery \|\| consistencyQuery \? null/);
+  assert.match(source, /duplicateResolutionQuery \|\| restoreQuery \|\| currentStateQuery \|\| businessAuditQuery \|\| consistencyQuery \? null/);
 });
 
 test('Phase 6.43 keeps current-state lookup owner-scoped and read-only', () => {
@@ -247,4 +247,32 @@ test('Phase 6.45 whole-business audit route is read-only and never auto-repairs'
   assert.doesNotMatch(block, /managementData\.update\(/);
   assert.doesNotMatch(block, /managementData\.create\(/);
   assert.doesNotMatch(block, /managementData\.delete\(/);
+});
+
+
+test('Phase 6.46 creates duplicate-resolution proposals without writing during chat', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /detectManagementDataDuplicateResolutionRequest\(message, history\)/);
+  assert.match(source, /managementData\.findBusinessCurrent\(auth\.ownerEmail, duplicateResolutionQuery\.businessKey\)/);
+  assert.match(source, /managementDataDuplicateResolutionCandidates\(/);
+  assert.match(source, /managementDataCleanupCandidates/);
+  const chatStart = source.indexOf("url.pathname === '/api/chat'");
+  const chatSource = source.slice(chatStart);
+  assert.doesNotMatch(chatSource, /resolveDuplicateGroup\(/);
+});
+
+test('Phase 6.46 duplicate resolution has a separate explicit-confirmation endpoint', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /url\.pathname === '\/api\/management-data\/resolve-duplicates'/);
+  assert.match(source, /body\.confirmed !== true \|\| body\.operation !== 'deduplicate'/);
+  assert.match(source, /managementData\.findDuplicateGroup\(auth\.ownerEmail, query\)/);
+  assert.match(source, /managementData\.resolveDuplicateGroup\(auth\.ownerEmail/);
+  assert.match(source, /MANAGEMENT_DATA_DEDUPLICATE_STALE/);
+});
+
+test('Phase 6.46 ordinary management reads ignore rows already superseded as duplicates', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/management-data/postgres-management-data-repository.js'), 'utf8');
+  assert.match(source, /superseded_by_management_data_id IS NULL/);
+  assert.match(source, /superseded_reason = 'owner confirmed duplicate resolution'/);
+  assert.doesNotMatch(source, /DELETE FROM management_data/i);
 });
