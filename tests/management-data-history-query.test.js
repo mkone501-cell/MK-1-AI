@@ -103,11 +103,11 @@ test('Phase 6.39 history repository is owner-scoped, ordered chronologically and
 
   assert.deepEqual(rows, []);
   assert.match(captured.sql, /FROM management_data_history/);
-  assert.match(captured.sql, /WHERE owner_email = \$1/);
-  assert.match(captured.sql, /data_date = \$2::date/);
-  assert.match(captured.sql, /metric_type = \$3/);
-  assert.match(captured.sql, /business_key = \$4/);
-  assert.match(captured.sql, /ORDER BY changed_at ASC, id ASC/);
+  assert.match(captured.sql, /WHERE history\.owner_email = \$1/);
+  assert.match(captured.sql, /history\.data_date = \$2::date/);
+  assert.match(captured.sql, /history\.metric_type = \$3/);
+  assert.match(captured.sql, /history\.business_key = \$4/);
+  assert.match(captured.sql, /ORDER BY history\.changed_at ASC, history\.id ASC/);
   assert.deepEqual(captured.params, ['owner@example.com', '2026-08-15', 'revenue', 'north-star-beans']);
 });
 
