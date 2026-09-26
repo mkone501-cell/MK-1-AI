@@ -351,6 +351,109 @@ function detectManagementDataCurrentStateQuery(message, history = []) {
   };
 }
 
+function detectManagementDataDuplicateResolutionRequest(message, history = []) {
+  const text = String(message || '').trim();
+  if (!text || !/重複/.test(text) || !/(?:整理|解消|統合|候補|残す|残せ|どれ|まとめ)/.test(text)) return null;
+
+  const directTarget = managementTargetFromExplicitMessage(text);
+  const directBusiness = parseBusinessAndDate(text).businessKey;
+  if (directTarget?.businessKey) {
+    return {
+      businessKey:directTarget.businessKey,
+      dataDate:directTarget.dataDate,
+      metricType:directTarget.metricType
+    };
+  }
+  if (directBusiness) return { businessKey:directBusiness, dataDate:null, metricType:null };
+
+  const recentTurns = Array.isArray(history) ? history.slice(-8) : [];
+  for (let index = recentTurns.length - 1; index >= 0; index--) {
+    const turn = recentTurns[index];
+    if (!turn || turn.role !== 'user') continue;
+    const target = managementTargetFromExplicitMessage(turn.content);
+    if (target?.businessKey) {
+      return {
+        businessKey:target.businessKey,
+        dataDate:directTarget?.dataDate || null,
+        metricType:directTarget?.metricType || null
+      };
+    }
+    const audit = detectManagementDataBusinessAuditQuery(turn.content, []);
+    if (audit?.businessKey) return { businessKey:audit.businessKey, dataDate:null, metricType:null };
+  }
+  return null;
+}
+
+function managementDataDuplicateResolutionCandidates(currentEntries, historyEntries, query = {}, originalText = '') {
+  const currentRows = (Array.isArray(currentEntries) ? currentEntries : []).filter(Boolean);
+  const historyRows = (Array.isArray(historyEntries) ? historyEntries : []).filter(Boolean);
+  const historyCount = new Map();
+  for (const row of historyRows) {
+    const id = String(row.management_data_id ?? '');
+    if (!id) continue;
+    historyCount.set(id, (historyCount.get(id) || 0) + 1);
+  }
+
+  const groups = new Map();
+  for (const row of currentRows) {
+    const dataDate = managementAuditDateKey(row.data_date);
+    const metricType = String(row.metric_type || '');
+    if (!dataDate || !metricType) continue;
+    if (query.dataDate && query.dataDate !== dataDate) continue;
+    if (query.metricType && query.metricType !== metricType) continue;
+    const key = `${dataDate}|${metricType}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+
+  const candidates = [];
+  for (const rows of groups.values()) {
+    if (rows.length < 2) continue;
+    const decorated = rows.map(row => ({
+      id:String(row.id ?? ''),
+      amount:Number(row.amount),
+      currency:String(row.currency || '').trim().toUpperCase(),
+      createdAt:row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at || ''),
+      updatedAt:row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at || ''),
+      historyCount:historyCount.get(String(row.id ?? '')) || 0,
+      source:String(row.source || ''),
+      note:String(row.note || '')
+    })).filter(row => /^\d+$/.test(row.id) && Number.isFinite(row.amount) && row.currency && !Number.isNaN(new Date(row.updatedAt).getTime()));
+    if (decorated.length !== rows.length) continue;
+
+    const ranked = [...decorated].sort((a, b) => {
+      if (b.historyCount !== a.historyCount) return b.historyCount - a.historyCount;
+      const updatedDiff = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      if (updatedDiff) return updatedDiff;
+      const createdDiff = new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+      if (createdDiff) return createdDiff;
+      return Number(b.id) - Number(a.id);
+    });
+    const sample = rows[0];
+    candidates.push({
+      kind:'management-data-cleanup',
+      operation:'deduplicate',
+      businessKey:query.businessKey || String(sample.business_key || ''),
+      dataDate:managementAuditDateKey(sample.data_date),
+      metricType:String(sample.metric_type || ''),
+      rows:decorated,
+      recommendedKeepId:ranked[0].id,
+      recommendationReason:'変更履歴の多い行を優先し、同数なら更新日時が新しい行を候補にしています。最終判断は本人が行います。',
+      originalText:String(originalText || ''),
+      confirmed:false
+    });
+  }
+  candidates.sort((a, b) => a.dataDate.localeCompare(b.dataDate) || a.metricType.localeCompare(b.metricType));
+  return candidates;
+}
+
+function managementDataDuplicateResolutionAnswer(candidates, businessKey) {
+  const items = Array.isArray(candidates) ? candidates : [];
+  const businessName = businessKey === 'north-star-beans' ? 'NORTH STAR BEANS' : businessKey || '対象事業';
+  if (!items.length) return `${businessName}には、現在整理が必要な重複経営数値はありません。何も変更していません。`;
+  return `${businessName}の重複整理候補を${items.length}件作成しました。まだ何も変更していません。各候補で残す行の値・更新日時・変更履歴件数を確認し、残す行を本人が選んだ場合だけ整理します。元の行と変更履歴は削除せず、選ばなかった行を重複扱いとして除外します。`;
+}
+
 function detectManagementDataBusinessAuditQuery(message, history = []) {
   const text = String(message || '').trim();
   if (!text) return null;
@@ -1413,4 +1516,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, detectManagementDataBusinessAuditQuery, managementDataBusinessAuditAnswer, detectManagementDataHistoryConsistencyQuery, managementDataHistoryConsistencyAnswer, managementDataHistoryAnswer, formatManagementHistoryValue, formatManagementHistoryChangedAt, detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, detectManagementDataDuplicateResolutionRequest, managementDataDuplicateResolutionCandidates, managementDataDuplicateResolutionAnswer, detectManagementDataBusinessAuditQuery, managementDataBusinessAuditAnswer, detectManagementDataHistoryConsistencyQuery, managementDataHistoryConsistencyAnswer, managementDataHistoryAnswer, formatManagementHistoryValue, formatManagementHistoryChangedAt, detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
