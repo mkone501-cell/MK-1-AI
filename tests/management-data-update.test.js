@@ -102,3 +102,59 @@ test('Phase 6.38 migration creates indexed audit history without changing the cu
   assert.match(sql, /changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW\(\)/);
   assert.match(sql, /management_data_history_entry_changed_idx/);
 });
+
+
+test('Phase 6.46 resolves duplicate rows by superseding, never deleting', async () => {
+  let captured = null;
+  const repository = new PostgresManagementDataRepository({
+    async query(sql, params) {
+      captured = { sql, params };
+      return { rows:[{ keep_id:'7', superseded_count:1 }] };
+    }
+  });
+  const result = await repository.resolveDuplicateGroup('owner@example.com', {
+    businessKey:'north-star-beans',
+    dataDate:'2026-09-22',
+    metricType:'revenue',
+    keepEntryId:'7',
+    expectedRows:[
+      { id:'4', amount:160000, currency:'JPY', updatedAt:'2026-09-22T10:00:00.000Z' },
+      { id:'7', amount:161000, currency:'JPY', updatedAt:'2026-09-22T11:00:00.000Z' }
+    ]
+  });
+
+  assert.deepEqual(result, { keepEntryId:'7', supersededCount:1 });
+  assert.match(captured.sql, /FOR UPDATE/);
+  assert.match(captured.sql, /superseded_by_management_data_id = valid.keep_id/);
+  assert.match(captured.sql, /superseded_reason = 'owner confirmed duplicate resolution'/);
+  assert.doesNotMatch(captured.sql, /DELETE FROM management_data/i);
+  assert.equal(captured.params[0], 'owner@example.com');
+  assert.equal(captured.params[4], '7');
+});
+
+test('Phase 6.46 fails closed when the duplicate snapshot is stale', async () => {
+  const repository = new PostgresManagementDataRepository({
+    async query() { return { rows:[] }; }
+  });
+  const result = await repository.resolveDuplicateGroup('owner@example.com', {
+    businessKey:'north-star-beans',
+    dataDate:'2026-09-22',
+    metricType:'revenue',
+    keepEntryId:'7',
+    expectedRows:[
+      { id:'4', amount:160000, currency:'JPY', updatedAt:'2026-09-22T10:00:00.000Z' },
+      { id:'7', amount:161000, currency:'JPY', updatedAt:'2026-09-22T11:00:00.000Z' }
+    ]
+  });
+  assert.equal(result, null);
+});
+
+test('Phase 6.46 migration preserves duplicate rows and adds superseded metadata', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const sql = fs.readFileSync(path.join(__dirname, '../db/migrations/007_add_management_data_superseded.sql'), 'utf8');
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS superseded_by_management_data_id/);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS superseded_at/);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS superseded_reason/);
+  assert.doesNotMatch(sql, /DELETE FROM management_data/i);
+});
