@@ -136,8 +136,8 @@ test('Phase 6.39 keeps history lookup owner-scoped and read-only', () => {
   const repositorySource = fs.readFileSync(path.join(__dirname, '../server/management-data/postgres-management-data-repository.js'), 'utf8');
   assert.match(repositorySource, /async findHistory\(ownerEmail, query\)/);
   assert.match(repositorySource, /FROM management_data_history/);
-  assert.match(repositorySource, /WHERE owner_email = \$1/);
-  assert.match(repositorySource, /ORDER BY changed_at ASC, id ASC/);
+  assert.match(repositorySource, /WHERE history\.owner_email = \$1/);
+  assert.match(repositorySource, /ORDER BY history\.changed_at ASC, history\.id ASC/);
 });
 
 
