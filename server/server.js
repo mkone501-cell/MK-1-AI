@@ -21,7 +21,7 @@ const { proposeMemory } = require('./knowledge/update-candidates');
 const { detectManagementDataCandidate, detectManagementDataCandidates, isSameManagementDataValue, managementDataCandidateAcknowledgement } = require('./management-data/candidates');
 const { PostgresManagementDataRepository } = require('./management-data/postgres-management-data-repository');
 const { migrateManagementData } = require('./management-data/migrate-management-data');
-const { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, detectManagementDataBusinessAuditQuery, managementDataBusinessAuditAnswer, detectManagementDataHistoryConsistencyQuery, managementDataHistoryConsistencyAnswer, managementDataHistoryAnswer, detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
+const { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, detectManagementDataDuplicateResolutionRequest, managementDataDuplicateResolutionCandidates, managementDataDuplicateResolutionAnswer, detectManagementDataBusinessAuditQuery, managementDataBusinessAuditAnswer, detectManagementDataHistoryConsistencyQuery, managementDataHistoryConsistencyAnswer, managementDataHistoryAnswer, detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
 
 const ROOT = path.resolve(__dirname, '..');
 const MAX_BODY_BYTES = 32 * 1024;
@@ -298,6 +298,50 @@ function createApplication(options = {}) {
       } catch { logger.error('knowledge.request_failed'); return respondJson(req, res, 503, { error:'経営知識を処理できませんでした。時間をおいてお試しください。' }); }
     }
 
+    if (req.method === 'POST' && url.pathname === '/api/management-data/resolve-duplicates') {
+      if (!requestOriginAllowed(req, config)) return respondJson(req, res, 403, { error:'この画面からご利用ください。' });
+      const session = await requireOwner(req, res, { csrf:true });
+      if (!session) return;
+      if (!managementData) return respondJson(req, res, 503, { error:'経営数値の整理機能が利用できません。' });
+      if (isRateLimited(req, 'management-data', 10)) return respondJson(req, res, 429, { error:'操作が多すぎます。時間をおいてお試しください。' });
+      try {
+        const body = await readJson(req);
+        if (body.confirmed !== true || body.operation !== 'deduplicate') {
+          return respondJson(req, res, 400, { error:'重複整理には本人の明示的な確認が必要です。' });
+        }
+        const query = {
+          businessKey:typeof body.businessKey === 'string' ? body.businessKey.trim() : '',
+          dataDate:typeof body.dataDate === 'string' ? body.dataDate.trim() : '',
+          metricType:typeof body.metricType === 'string' ? body.metricType.trim() : ''
+        };
+        const keepEntryId = String(body.keepEntryId ?? '').trim();
+        const expectedRows = Array.isArray(body.expectedRows) ? body.expectedRows : [];
+        if (!query.businessKey || !/^\d{4}-\d{2}-\d{2}$/.test(query.dataDate) ||
+            !query.metricType || !/^\d+$/.test(keepEntryId) || expectedRows.length < 2) {
+          return respondJson(req, res, 409, { error:'重複整理の対象を安全に確認できません。もう一度整理候補を作成してください。' });
+        }
+        const currentRows = await managementData.findDuplicateGroup(auth.ownerEmail, query);
+        const currentIds = currentRows.map(row => String(row.id)).sort();
+        const expectedIds = expectedRows.map(row => String(row?.id ?? '')).sort();
+        if (currentRows.length < 2 || currentIds.length !== expectedIds.length ||
+            currentIds.some((id, index) => id !== expectedIds[index]) || !currentIds.includes(keepEntryId)) {
+          return respondJson(req, res, 409, { error:'重複データが候補作成後に変更されています。最新の候補を作り直してください。', code:'MANAGEMENT_DATA_DEDUPLICATE_STALE' });
+        }
+        const resolved = await managementData.resolveDuplicateGroup(auth.ownerEmail, {
+          ...query,
+          keepEntryId,
+          expectedRows
+        });
+        if (!resolved) {
+          return respondJson(req, res, 409, { error:'重複データが候補作成後に変更されています。最新の候補を作り直してください。', code:'MANAGEMENT_DATA_DEDUPLICATE_STALE' });
+        }
+        return respondJson(req, res, 200, { resolved:true, ...resolved });
+      } catch {
+        logger.error('management_data.duplicate_resolution_failed');
+        return respondJson(req, res, 503, { error:'重複経営数値を整理できませんでした。時間をおいてお試しください。' });
+      }
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/management-data/confirm') {
       if (!requestOriginAllowed(req, config)) return respondJson(req, res, 403, { error:'この画面からご利用ください。' });
       const session = await requireOwner(req, res, { csrf:true });
@@ -448,6 +492,7 @@ function createApplication(options = {}) {
             catch { logger.error('knowledge.candidate_failed'); return respondJson(req, res, 503, { error:'既存の経営知識を確認できませんでした。時間をおいてお試しください。' }); }
           }
           let managementDataCandidates = detectManagementDataCandidates(message);
+          let managementDataCleanupCandidates = [];
           let managementDataDuplicateCount = 0;
           if (managementData && managementDataCandidates.length) {
             try {
@@ -480,7 +525,29 @@ function createApplication(options = {}) {
           }
           let managementDataDirectAnswer = null;
           if (managementData) {
-            const restoreQuery = detectManagementDataRestoreRequest(message, history);
+            const duplicateResolutionQuery = detectManagementDataDuplicateResolutionRequest(message, history);
+            if (duplicateResolutionQuery) {
+              managementDataCandidates = [];
+              managementDataDuplicateCount = 0;
+              try {
+                const duplicateRows = await managementData.findBusinessCurrent(auth.ownerEmail, duplicateResolutionQuery.businessKey);
+                const duplicateHistory = await managementData.findBusinessHistory(auth.ownerEmail, duplicateResolutionQuery.businessKey);
+                managementDataCleanupCandidates = managementDataDuplicateResolutionCandidates(
+                  duplicateRows,
+                  duplicateHistory,
+                  duplicateResolutionQuery,
+                  message
+                );
+                managementDataDirectAnswer = managementDataDuplicateResolutionAnswer(
+                  managementDataCleanupCandidates,
+                  duplicateResolutionQuery.businessKey
+                );
+              } catch {
+                logger.error('management_data.duplicate_resolution_candidate_failed');
+                return respondJson(req, res, 503, { error:'重複整理候補を作成できませんでした。時間をおいてお試しください。' });
+              }
+            }
+            const restoreQuery = duplicateResolutionQuery ? null : detectManagementDataRestoreRequest(message, history);
             if (restoreQuery) {
               // A restore request owns this turn: never let a coincidental numeric phrase
               // fall through as an ordinary create/update candidate.
@@ -532,7 +599,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'変更履歴から復元候補を作成できませんでした。時間をおいてお試しください。' });
               }
             }
-            const currentStateQuery = restoreQuery ? null : detectManagementDataCurrentStateQuery(message, history);
+            const currentStateQuery = duplicateResolutionQuery || restoreQuery ? null : detectManagementDataCurrentStateQuery(message, history);
             if (currentStateQuery) {
               try {
                 const stateHistoryEntries = await managementData.findHistory(auth.ownerEmail, currentStateQuery);
@@ -555,7 +622,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'経営数値の現在値・変更日時を確認できませんでした。時間をおいてお試しください。' });
               }
             }
-            const businessAuditQuery = restoreQuery || currentStateQuery
+            const businessAuditQuery = duplicateResolutionQuery || restoreQuery || currentStateQuery
               ? null
               : detectManagementDataBusinessAuditQuery(message, history);
             if (businessAuditQuery) {
@@ -572,7 +639,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'経営データ全体の整合性を確認できませんでした。時間をおいてお試しください。' });
               }
             }
-            const consistencyQuery = restoreQuery || currentStateQuery || businessAuditQuery
+            const consistencyQuery = duplicateResolutionQuery || restoreQuery || currentStateQuery || businessAuditQuery
               ? null
               : detectManagementDataHistoryConsistencyQuery(message, history);
             if (consistencyQuery) {
@@ -597,7 +664,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'経営数値と変更履歴の整合性を確認できませんでした。時間をおいてお試しください。' });
               }
             }
-            const historyQuery = restoreQuery || currentStateQuery || businessAuditQuery || consistencyQuery ? null : (detectManagementDataHistoryQuery(message)
+            const historyQuery = duplicateResolutionQuery || restoreQuery || currentStateQuery || businessAuditQuery || consistencyQuery ? null : (detectManagementDataHistoryQuery(message)
               || detectManagementDataHistoryFollowUp(message, history));
             if (historyQuery) {
               try {
@@ -734,7 +801,8 @@ function createApplication(options = {}) {
             const conversationId = await conversations.appendExchange({ ownerId:session.user.id, conversationId:id, message, answer:result.answer });
             return respondJson(req, res, 200, { ...result, conversationId,
               memoryCandidates:proposals,
-              managementDataCandidates });
+              managementDataCandidates,
+              managementDataCleanupCandidates });
           } catch {
             logger.error('conversation.save_failed');
             return respondJson(req, res, 503, { error:'会話を保存できませんでした。時間をおいてお試しください。' });
