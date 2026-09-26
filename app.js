@@ -54,6 +54,7 @@ let knowledgeItems = [];
 // Unapproved candidates stay in memory only; never localStorage or the knowledge DB.
 let memoryProposals = [];
 let managementDataProposals = [];
+let managementDataCleanupProposals = [];
 let proposalSequence = 0;
 let editingKnowledgeId = null;
 let knowledgeMutationPending = false;
@@ -112,7 +113,7 @@ function approvalMini(a) { return `<div class="approval-row"><span class="agent-
 function chart() { return `<div class="report-chart">${[38,48,42,62,58,78,88,76,96].map((h,i)=>`<div class="bar" style="height:${h}%"><span>${i+1}月</span></div>`).join('')}</div>`; }
 function empty(title,text) { return `<div class="empty">◌<b>${title}</b><span>${text}</span></div>`; }
 
-function chatView() { const waiting=conversationLoading || newConversationPending || chatRequestPending; return `<div class="chat-layout"><div class="card chat-card"><div class="chat-header"><span class="agent-icon">✦</span><div><strong>AI秘書 ミライ</strong><small style="display:block;color:var(--muted)"><span class="status-dot"></span>対応できます</small></div>${serverConversation ? `<button class="secondary" type="button" id="new-conversation" ${waiting ? 'disabled' : ''}>＋ 新しい会話</button>` : ''}</div><div class="messages" id="messages">${state.conversations.map(m=>`<div class="message ${m.role === 'user' ? 'user':''}"><div class="bubble">${safe(m.text)}</div></div>`).join('')}${serverConversation && !state.conversations.length ? '<div class="empty">新しい会話です。ミライへ質問してください。</div>' : ''}${serverConversation ? memoryProposals.map(memoryCandidateView).join('') + managementDataProposals.map(managementDataCandidateView).join('') : ''}</div><form class="composer" id="chat-form"><textarea id="chat-input" placeholder="ミライに相談する…" aria-label="メッセージ" ${waiting ? 'disabled' : ''} required></textarea><button type="submit" aria-label="送信" ${waiting ? 'disabled' : ''}>➤</button></form></div>
+function chatView() { const waiting=conversationLoading || newConversationPending || chatRequestPending; return `<div class="chat-layout"><div class="card chat-card"><div class="chat-header"><span class="agent-icon">✦</span><div><strong>AI秘書 ミライ</strong><small style="display:block;color:var(--muted)"><span class="status-dot"></span>対応できます</small></div>${serverConversation ? `<button class="secondary" type="button" id="new-conversation" ${waiting ? 'disabled' : ''}>＋ 新しい会話</button>` : ''}</div><div class="messages" id="messages">${state.conversations.map(m=>`<div class="message ${m.role === 'user' ? 'user':''}"><div class="bubble">${safe(m.text)}</div></div>`).join('')}${serverConversation && !state.conversations.length ? '<div class="empty">新しい会話です。ミライへ質問してください。</div>' : ''}${serverConversation ? memoryProposals.map(memoryCandidateView).join('') + managementDataProposals.map(managementDataCandidateView).join('') + managementDataCleanupProposals.map(managementDataCleanupCandidateView).join('') : ''}</div><form class="composer" id="chat-form"><textarea id="chat-input" placeholder="ミライに相談する…" aria-label="メッセージ" ${waiting ? 'disabled' : ''} required></textarea><button type="submit" aria-label="送信" ${waiting ? 'disabled' : ''}>➤</button></form></div>
   <div class="card suggestions"><h3>相談の例</h3><p style="font-size:12px;color:var(--muted)">押すと入力できます。</p>${['今月の広告結果はどう？','新しい広告動画を3案作って','Instagram広告を考えて','今、何を承認すればいい？'].map(x=>`<button data-suggestion="${x}">${x}</button>`).join('')}<div class="notice" style="margin-top:20px">ミライは提案と下書きを作ります。広告費の使用や外部公開は、代表の承認なしに実行しません。</div></div></div>`; }
 function projectsView() { return `<div class="page-head"><div><h2>案件一覧</h2><p>クライアントごとの仕事と進み具合を確認できます。</p></div><button class="primary" id="new-project">＋ 新しい案件（準備中）</button></div><div class="card table-card"><table><thead><tr><th>クライアント / 案件</th><th>目的</th><th>進み具合</th><th>状態</th><th></th></tr></thead><tbody>${state.projects.map(p=>{const c=state.clients.find(c=>c.id===p.clientId);return `<tr><td><span class="client-badge">NS</span><strong>${safe(c.name)}</strong><br><small>${safe(p.name)}</small></td><td>${safe(p.goal)}</td><td><div class="progress" style="width:120px"><i style="width:${p.progress}%"></i></div><small>${p.progress}%</small></td><td>${statusPill(p.status)}</td><td><button class="secondary" data-project="${p.id}">詳細を見る</button></td></tr>`}).join('')}</tbody></table></div>`; }
 function projectDetail(id) { const p=state.projects.find(x=>x.id===id)||state.projects[0], c=state.clients.find(x=>x.id===p.clientId); return `<div class="page-head"><div><button class="link-button" data-route="projects">← 案件一覧</button><h2>${safe(p.name)}</h2><p>${safe(c.name)} ・ ${safe(p.goal)}</p></div>${statusPill(p.status)}</div><div class="metrics">${metricCard('進み具合',`${p.progress}%`,'計画どおり進行中','◎')}${metricCard('作業中',`${state.tasks.filter(x=>x.status==='作業中').length}件`,'AIチームが対応中','✦')}${metricCard('広告案',`${state.adPlans.length}案`,'1案が承認待ち','◇')}${metricCard('今月の売上',yen(state.salesMetrics[0].revenue),'前月比 18.4%','¥')}</div><div class="dashboard-grid"><div class="card"><div class="section-head"><h3>この案件の作業</h3></div>${state.tasks.map(taskRow).join('')}</div><div class="card"><h3>案件情報</h3><p><small>クライアント</small><br><strong>${safe(c.name)}</strong></p><p><small>開始日</small><br><strong>${p.startedAt}</strong></p><p><small>目標</small><br><strong>${safe(p.goal)}</strong></p></div></div>`; }
@@ -150,6 +151,63 @@ function managementDataCandidateView(item) {
   const dismissLabel = restoring ? '今回は復元しない' : updating ? '今回は更新しない' : '今回は保存しない';
   const pendingVerb = restoring ? '復元' : updating ? '更新' : '保存';
   return `<section class="memory-candidate notice" aria-label="${heading}"><strong>${heading}</strong><p>まだ${pendingVerb}していません。内容を確認してください。</p><small>${safe(labels[item.metricType] || item.metricType)} ・ ${safe(date)}</small>${valueBlock}<p>${safe(item.originalText)}</p><p>${canSave ? confirmText : '事業名・日付・更新対象を安全に特定できないため、この候補は反映できません。内容を含めてもう一度入力してください。'}</p><div class="knowledge-actions">${canSave ? `<button type="button" class="primary" data-management-accept="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>${actionLabel}</button>` : ''}<button type="button" class="secondary" data-management-dismiss="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>${dismissLabel}</button></div></section>`;
+}
+
+function managementDataCleanupCandidateView(item) {
+  const labels = { revenue:'売上', expense:'経費', profit:'利益', cash_balance:'現金残高', customers:'来客数', average_spend:'客単価', other:'その他' };
+  const date = item.dataDate ? item.dataDate.replace(/-/g, '/') : '日付未指定';
+  const rows = Array.isArray(item.rows) ? item.rows : [];
+  const heading = '重複経営数値の整理候補があります';
+  const rowBlocks = rows.map(row => {
+    const unit = item.metricType === 'customers' || row.currency === 'COUNT' ? '人' : '円';
+    const recommended = String(row.id) === String(item.recommendedKeepId);
+    const created = row.createdAt ? new Date(row.createdAt).toLocaleString('ja-JP') : '不明';
+    const updated = row.updatedAt ? new Date(row.updatedAt).toLocaleString('ja-JP') : '不明';
+    return `<article class="knowledge-content"><h3>管理ID ${safe(row.id)}${recommended ? '（残す候補）' : ''}</h3><p><strong>${Number(row.amount).toLocaleString('ja-JP')}${unit}</strong></p><small>作成: ${safe(created)} ・ 最終更新: ${safe(updated)} ・ 変更履歴: ${Number(row.historyCount || 0)}件</small><div class="knowledge-actions"><button type="button" class="${recommended ? 'primary' : 'secondary'}" data-management-cleanup-accept="${safe(item.id)}" data-keep-entry-id="${safe(row.id)}" ${item.pending ? 'disabled' : ''}>ID ${safe(row.id)}を残して整理</button></div></article>`;
+  }).join('');
+  return `<section class="memory-candidate notice" aria-label="${heading}"><strong>${heading}</strong><p>まだ整理していません。選ばなかった行は削除せず、重複扱いとして通常の集計・検索から除外します。変更履歴も残します。</p><small>${safe(labels[item.metricType] || item.metricType)} ・ ${safe(date)}</small>${rowBlocks}<p>${safe(item.recommendationReason || '')}</p><div class="knowledge-actions"><button type="button" class="secondary" data-management-cleanup-dismiss="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>今回は整理しない</button></div></section>`;
+}
+
+async function decideManagementDataCleanupCandidate(id, keepEntryId) {
+  const item = managementDataCleanupProposals.find(candidate => candidate.id === id);
+  if (!serverConversation || !item || item.pending) return;
+  if (keepEntryId === null) {
+    managementDataCleanupProposals = managementDataCleanupProposals.filter(candidate => candidate.id !== id);
+    render();
+    showToast('今回は重複経営数値を整理しません。');
+    return;
+  }
+  const keepRow = (item.rows || []).find(row => String(row.id) === String(keepEntryId));
+  if (!keepRow) { showToast('残す行を確認できません。候補を作り直してください。'); return; }
+  item.pending = true; render();
+  try {
+    const response = await fetch('api/management-data/resolve-duplicates', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body:JSON.stringify({
+        confirmed:true,
+        operation:'deduplicate',
+        originalText:item.originalText,
+        businessKey:item.businessKey,
+        dataDate:item.dataDate,
+        metricType:item.metricType,
+        keepEntryId:String(keepEntryId),
+        expectedRows:(item.rows || []).map(row => ({
+          id:String(row.id),
+          amount:Number(row.amount),
+          currency:row.currency,
+          updatedAt:row.updatedAt
+        }))
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || '重複整理できませんでした。');
+    managementDataCleanupProposals = managementDataCleanupProposals.filter(candidate => candidate.id !== id);
+    render();
+    showToast(`管理ID ${keepEntryId}を残し、重複${Number(result.supersededCount || 0)}件を整理しました。元の行と履歴は削除していません。`);
+  } catch (error) {
+    item.pending = false; render(); showToast(error.message);
+  }
 }
 
 async function decideManagementDataCandidate(id, accept) {
@@ -300,6 +358,7 @@ async function handleChat(text) {
       // Replace the preceding turn's unapproved candidates; bound transient UI memory.
       memoryProposals = (result.memoryCandidates || []).slice(0, 1).map(item => ({ ...item, id:String(++proposalSequence) }));
       managementDataProposals = (result.managementDataCandidates || []).slice(0, 6).map(item => ({ ...item, id:`management-${++proposalSequence}` }));
+      managementDataCleanupProposals = (result.managementDataCleanupCandidates || []).slice(0, 6).map(item => ({ ...item, id:`management-cleanup-${++proposalSequence}` }));
     }
     if (result.mode === 'demo' && !result.task) result.task = demoChatResult(msg).task;
     if (result.task) state.tasks.unshift(result.task);
@@ -325,6 +384,7 @@ async function startNewConversation() {
     state.conversations = [];
     memoryProposals = [];
     managementDataProposals = [];
+    managementDataCleanupProposals = [];
     saveState();
     showToast('新しい会話を開始しました。過去の会話は保存されています。');
   } catch { showToast('新しい会話を作成できませんでした。'); }
@@ -339,6 +399,7 @@ window.addEventListener('mk1:authenticated', async () => {
   state.conversations = [];
   memoryProposals = [];
   managementDataProposals = [];
+  managementDataCleanupProposals = [];
   activeConversationId = null;
   saveState();
   render();
@@ -461,6 +522,11 @@ document.addEventListener('click', e => {
   if (e.target.closest('#cancel-knowledge-edit')) { e.preventDefault(); cancelKnowledgeEdit(); return; }
   const disable = e.target.closest('[data-knowledge-disable]');
   if (disable) { e.preventDefault(); return disableKnowledge(disable.dataset.knowledgeDisable); }
+
+  const acceptManagementCleanup = e.target.closest('[data-management-cleanup-accept]');
+  if (acceptManagementCleanup) { e.preventDefault(); decideManagementDataCleanupCandidate(acceptManagementCleanup.dataset.managementCleanupAccept, acceptManagementCleanup.dataset.keepEntryId); return; }
+  const dismissManagementCleanup = e.target.closest('[data-management-cleanup-dismiss]');
+  if (dismissManagementCleanup) { e.preventDefault(); decideManagementDataCleanupCandidate(dismissManagementCleanup.dataset.managementCleanupDismiss, null); return; }
 
   const acceptManagement = e.target.closest('[data-management-accept]');
   if (acceptManagement) { e.preventDefault(); decideManagementDataCandidate(acceptManagement.dataset.managementAccept, true); return; }
