@@ -9,6 +9,9 @@ const {
   detectManagementDataRestoreRequest,
   detectManagementDataCurrentStateQuery,
   managementDataCurrentStateAnswer,
+  detectManagementDataDuplicateResolutionRequest,
+  managementDataDuplicateResolutionCandidates,
+  managementDataDuplicateResolutionAnswer,
   detectManagementDataBusinessAuditQuery,
   managementDataBusinessAuditAnswer,
   detectManagementDataHistoryConsistencyQuery,
@@ -735,4 +738,60 @@ test('Phase 6.45 detects audit history without a corresponding current confirmed
   assert.match(answer, /不整合が1件見つかりました/);
   assert.match(answer, /対応する現在の本人確認済み登録行が見つかりません/);
   assert.match(answer, /管理ID: 99/);
+});
+
+
+test('Phase 6.46 detects an explicit whole-business duplicate cleanup request', () => {
+  assert.deepEqual(
+    detectManagementDataDuplicateResolutionRequest('NORTH STAR BEANSの重複データを整理する候補を出して', []),
+    { businessKey:'north-star-beans', dataDate:null, metricType:null }
+  );
+});
+
+test('Phase 6.46 inherits only a recent explicit business for duplicate cleanup', () => {
+  const history = [
+    { role:'user', content:'NORTH STAR BEANSの経営データ全体に不整合がないか確認して' },
+    { role:'assistant', content:'重複登録を含む論理項目は2件です。' }
+  ];
+  assert.deepEqual(
+    detectManagementDataDuplicateResolutionRequest('重複を整理する候補を出して', history),
+    { businessKey:'north-star-beans', dataDate:null, metricType:null }
+  );
+});
+
+test('Phase 6.46 does not turn a plain audit question into a cleanup request', () => {
+  assert.equal(
+    detectManagementDataDuplicateResolutionRequest('NORTH STAR BEANSの経営データ全体に不整合がないか確認して', []),
+    null
+  );
+});
+
+test('Phase 6.46 builds one explicit keep-row choice per duplicate logical item', () => {
+  const candidates = managementDataDuplicateResolutionCandidates([
+    { id:'4', business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY', created_at:'2026-09-22T10:00:00Z', updated_at:'2026-09-22T10:00:00Z', source:'owner', note:'' },
+    { id:'7', business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue', amount:'161000', currency:'JPY', created_at:'2026-09-22T11:00:00Z', updated_at:'2026-09-22T11:00:00Z', source:'owner', note:'' },
+    { id:'2', business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'customers', amount:'80', currency:'COUNT', created_at:'2026-09-22T09:00:00Z', updated_at:'2026-09-22T09:00:00Z', source:'owner', note:'' },
+    { id:'3', business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'customers', amount:'81', currency:'COUNT', created_at:'2026-09-22T09:30:00Z', updated_at:'2026-09-22T09:30:00Z', source:'owner', note:'' }
+  ], [
+    { management_data_id:'4' },
+    { management_data_id:'4' },
+    { management_data_id:'7' }
+  ], { businessKey:'north-star-beans' }, '重複を整理する候補を出して');
+
+  assert.equal(candidates.length, 2);
+  const revenue = candidates.find(item => item.metricType === 'revenue');
+  assert.equal(revenue.rows.length, 2);
+  assert.equal(revenue.recommendedKeepId, '4');
+  assert.equal(revenue.operation, 'deduplicate');
+  assert.equal(revenue.confirmed, false);
+  assert.match(revenue.recommendationReason, /最終判断は本人/);
+  const customers = candidates.find(item => item.metricType === 'customers');
+  assert.equal(customers.recommendedKeepId, '3');
+});
+
+test('Phase 6.46 duplicate cleanup answer says nothing has changed before confirmation', () => {
+  const answer = managementDataDuplicateResolutionAnswer([{ metricType:'revenue' }, { metricType:'customers' }], 'north-star-beans');
+  assert.match(answer, /重複整理候補を2件/);
+  assert.match(answer, /まだ何も変更していません/);
+  assert.match(answer, /削除せず/);
 });
