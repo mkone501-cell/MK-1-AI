@@ -5,9 +5,10 @@ const path = require('node:path');
 
 test('Phase 6.5 wires management-data candidate detection into authenticated chat without auto-save', () => {
   const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
-  assert.match(source, /detectManagementDataCandidate\(message\)/);
-  assert.match(source, /managementDataCandidates:managementDataCandidate \? \[managementDataCandidate\] : \[\]/);
-  assert.doesNotMatch(source, /managementData\.create\(/);
+  assert.match(source, /const managementDataCandidates = detectManagementDataCandidates\(message\)/);
+  assert.match(source, /managementDataCandidates\s*\}/);
+  assert.match(source, /url\.pathname === '\/api\/management-data\/confirm'/);
+  assert.match(source, /body\.confirmed !== true/);
 });
 
 test('Phase 6.5 runs the management-data migration through its repository at startup', () => {
@@ -39,4 +40,12 @@ test('Phase 6.32 routes focused monthly and annual analysis through focused grou
   assert.match(source, /monthly_comparison[\s\S]*managementDataFocusedMultiMonthContext/);
   assert.match(source, /annual_period_analysis[\s\S]*managementDataFocusedMultiYearContext/);
   assert.match(source, /annual_comparison[\s\S]*managementDataFocusedMultiYearContext/);
+});
+
+
+test('Phase 6.35 replaces the model reply with deterministic pending-save wording before confirmation', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /if \(managementDataCandidates\.length\) \{/);
+  assert.match(source, /answer:managementDataCandidateAcknowledgement\(managementDataCandidates\)/);
+  assert.match(source, /conversations\.appendExchange[\s\S]*answer:result\.answer/);
 });

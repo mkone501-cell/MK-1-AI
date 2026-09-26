@@ -60,6 +60,15 @@ function detectManagementDataCandidate(message) {
 }
 
 
+function managementDataCandidateAcknowledgement(candidates) {
+  const count = Array.isArray(candidates) ? candidates.length : 0;
+  if (!count) return '';
+  if (count === 1) {
+    return '経営数値の保存候補を作成しました。まだ保存していません。下の内容を確認し、「確認して保存」を押した場合だけ保存します。';
+  }
+  return `経営数値の保存候補を${count}件作成しました。まだ保存していません。下の内容を確認し、それぞれ「確認して保存」を押した場合だけ保存します。`;
+}
+
 function detectManagementDataCandidates(message) {
   if (typeof message !== 'string') return [];
   const text = message.trim();
@@ -117,4 +126,4 @@ function detectManagementDataCandidates(message) {
   return candidates;
 }
 
-module.exports = { detectManagementDataCandidate, detectManagementDataCandidates, parseAmount };
+module.exports = { detectManagementDataCandidate, detectManagementDataCandidates, managementDataCandidateAcknowledgement, parseAmount };
