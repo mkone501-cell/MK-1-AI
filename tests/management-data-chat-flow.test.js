@@ -139,3 +139,12 @@ test('Phase 6.39 keeps history lookup owner-scoped and read-only', () => {
   assert.match(repositorySource, /WHERE owner_email = \$1/);
   assert.match(repositorySource, /ORDER BY changed_at ASC, id ASC/);
 });
+
+
+test('Phase 6.41 resolves contextual management-history details from persisted conversation history before querying the audit log', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /detectManagementDataHistoryQuery\(message\)[\s\S]*detectManagementDataHistoryFollowUp\(message, history\)/);
+  assert.match(source, /const history = \[\]/);
+  assert.match(source, /history = await conversations\.context/);
+  assert.match(source, /managementData\.findHistory\(auth\.ownerEmail, historyQuery\)/);
+});
