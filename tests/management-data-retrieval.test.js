@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
+const { detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
 
 test('Phase 6.7 parses a confirmed management-data fact question', () => {
@@ -988,4 +988,73 @@ test('Phase 6.33 focused monthly comparison exposes missing-month next input bef
   assert.match(context.body, /次に登録すると分析が広がる項目（サーバー判定）:/);
   assert.match(context.body, /2026年8月の売上を1日分以上登録すると、2026年8月を月次比較の対象にできます/);
   assert.match(context.body, /月別の確認済みデータ:/);
+});
+
+
+test('Phase 6.34 compares focused sales totals when registered-day counts match', () => {
+  const lines = managementDataFocusedGroupComparisonMetrics([
+    {
+      label:'2026年8月',
+      entries:[
+        { data_date:'2026-08-20', metric_type:'revenue', amount:'140000', currency:'JPY' },
+        { data_date:'2026-08-21', metric_type:'revenue', amount:'150000', currency:'JPY' }
+      ]
+    },
+    {
+      label:'2026年9月',
+      entries:[
+        { data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' },
+        { data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' }
+      ]
+    }
+  ], 'sales');
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /登録日数が同じ2日のため登録済み日合計を比較/);
+  assert.match(lines[0], /290,000円 → 2026年9月 310,000円/);
+  assert.match(lines[0], /差\+20,000円/);
+  assert.match(lines[0], /増減率\+6\.9%/);
+});
+
+test('Phase 6.34 compares registered-day averages when period day counts differ', () => {
+  const lines = managementDataFocusedGroupComparisonMetrics([
+    {
+      label:'2026年8月',
+      entries:[
+        { data_date:'2026-08-20', metric_type:'revenue', amount:'140000', currency:'JPY' }
+      ]
+    },
+    {
+      label:'2026年9月',
+      entries:[
+        { data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' },
+        { data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' }
+      ]
+    }
+  ], 'sales');
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /登録日数が異なる/);
+  assert.match(lines[0], /合計は直接比較せず/);
+  assert.match(lines[0], /登録日平均を比較/);
+  assert.match(lines[0], /140,000円 → 2026年9月 155,000円/);
+});
+
+test('Phase 6.34 embeds deterministic period comparison in focused monthly comparison', () => {
+  const context = managementDataFocusedMultiMonthContext([
+    {
+      label:'2026年8月', startDate:'2026-08-01', endDate:'2026-08-31',
+      entries:[
+        { business_key:'north-star-beans', data_date:'2026-08-20', metric_type:'revenue', amount:'140000', currency:'JPY' }
+      ]
+    },
+    {
+      label:'2026年9月', startDate:'2026-09-01', endDate:'2026-09-30',
+      entries:[
+        { business_key:'north-star-beans', data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' },
+        { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' }
+      ]
+    }
+  ], 'sales', true);
+  assert.match(context.body, /サーバー計算済み期間比較（再計算せずこの値を使用）:/);
+  assert.match(context.body, /合計は直接比較せず/);
+  assert.match(context.body, /登録日平均を比較/);
 });
