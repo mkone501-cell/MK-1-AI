@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataCandidate, detectManagementDataCandidates } = require('../server/management-data/candidates');
+const { detectManagementDataCandidate, detectManagementDataCandidates, managementDataCandidateAcknowledgement } = require('../server/management-data/candidates');
 
 test('Phase 6.4 detects a factual revenue number but never confirms it automatically', () => {
   const item = detectManagementDataCandidate('2026年9月21日のNORTH STAR BEANSの売上は25万円です。');
@@ -83,4 +83,26 @@ test('Phase 6.10 prefers the specific metric label when a shorter label is conta
   assert.equal(spend.length, 1);
   assert.equal(spend[0].metricType, 'average_spend');
   assert.equal(spend[0].amount, 2000);
+});
+
+
+test('Phase 6.35 pending management-data candidate never claims it was already saved', () => {
+  const items = detectManagementDataCandidates('2026年8月15日のNORTH STAR BEANSの売上は125000円です');
+  const answer = managementDataCandidateAcknowledgement(items);
+  assert.match(answer, /保存候補を作成しました/);
+  assert.match(answer, /まだ保存していません/);
+  assert.match(answer, /「確認して保存」を押した場合だけ保存します/);
+  assert.doesNotMatch(answer, /登録しました|保存しました/);
+});
+
+test('Phase 6.35 bundled candidates state the number of pending save candidates', () => {
+  const items = detectManagementDataCandidates('2026年9月22日のNORTH STAR BEANSの売上は160000円、来客数は80人、客単価は2000円でした。');
+  const answer = managementDataCandidateAcknowledgement(items);
+  assert.equal(items.length, 3);
+  assert.match(answer, /保存候補を3件作成しました/);
+  assert.match(answer, /それぞれ「確認して保存」を押した場合だけ保存します/);
+});
+
+test('Phase 6.35 has no acknowledgement when there is no save candidate', () => {
+  assert.equal(managementDataCandidateAcknowledgement([]), '');
 });
