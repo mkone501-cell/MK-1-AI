@@ -21,7 +21,7 @@ const { proposeMemory } = require('./knowledge/update-candidates');
 const { detectManagementDataCandidate, detectManagementDataCandidates } = require('./management-data/candidates');
 const { PostgresManagementDataRepository } = require('./management-data/postgres-management-data-repository');
 const { migrateManagementData } = require('./management-data/migrate-management-data');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
+const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
 
 const ROOT = path.resolve(__dirname, '..');
 const MAX_BODY_BYTES = 32 * 1024;
@@ -377,7 +377,9 @@ function createApplication(options = {}) {
                       entries:await managementData.findRange(auth.ownerEmail, { businessKey:managementQuery.businessKey, startDate:year.startDate, endDate:year.endDate })
                     });
                   }
-                  const context = managementDataMultiYearContext(groups);
+                  const context = managementQuery.analysisFocus
+                    ? managementDataFocusedMultiYearContext(groups, managementQuery.analysisFocus, false)
+                    : managementDataMultiYearContext(groups);
                   const scoped = scopeManagementAnalysisInputs({ query:managementQuery, history:replyHistory, knowledge:selectedKnowledge, context });
                   replyHistory = scoped.history;
                   selectedKnowledge = scoped.knowledge;
@@ -389,7 +391,9 @@ function createApplication(options = {}) {
                       entries:await managementData.findRange(auth.ownerEmail, { businessKey:managementQuery.businessKey, startDate:year.startDate, endDate:year.endDate })
                     });
                   }
-                  const context = managementDataAnnualComparisonContext(groups);
+                  const context = managementQuery.analysisFocus
+                    ? managementDataFocusedMultiYearContext(groups, managementQuery.analysisFocus, true)
+                    : managementDataAnnualComparisonContext(groups);
                   const scoped = scopeManagementAnalysisInputs({ query:managementQuery, history:replyHistory, knowledge:selectedKnowledge, context });
                   replyHistory = scoped.history;
                   selectedKnowledge = scoped.knowledge;
@@ -401,7 +405,9 @@ function createApplication(options = {}) {
                       entries:await managementData.findRange(auth.ownerEmail, { businessKey:managementQuery.businessKey, startDate:month.startDate, endDate:month.endDate })
                     });
                   }
-                  const context = managementDataMultiMonthContext(groups);
+                  const context = managementQuery.analysisFocus
+                    ? managementDataFocusedMultiMonthContext(groups, managementQuery.analysisFocus, false)
+                    : managementDataMultiMonthContext(groups);
                   const scoped = scopeManagementAnalysisInputs({ query:managementQuery, history:replyHistory, knowledge:selectedKnowledge, context });
                   replyHistory = scoped.history;
                   selectedKnowledge = scoped.knowledge;
@@ -413,7 +419,9 @@ function createApplication(options = {}) {
                       entries:await managementData.findRange(auth.ownerEmail, { businessKey:managementQuery.businessKey, startDate:month.startDate, endDate:month.endDate })
                     });
                   }
-                  const context = managementDataMonthlyComparisonContext(groups);
+                  const context = managementQuery.analysisFocus
+                    ? managementDataFocusedMultiMonthContext(groups, managementQuery.analysisFocus, true)
+                    : managementDataMonthlyComparisonContext(groups);
                   const scoped = scopeManagementAnalysisInputs({ query:managementQuery, history:replyHistory, knowledge:selectedKnowledge, context });
                   replyHistory = scoped.history;
                   selectedKnowledge = scoped.knowledge;
