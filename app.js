@@ -131,17 +131,25 @@ function memoryCandidateView(item) {
 function managementDataCandidateView(item) {
   const labels = { revenue:'売上', expense:'経費', profit:'利益', cash_balance:'現金残高', customers:'来客数', average_spend:'客単価' };
   const date = item.dataDate ? item.dataDate.replace(/-/g, '/') : '日付未指定';
+  const restoring = item.operation === 'restore';
   const updating = item.operation === 'update';
-  const canSave = Boolean(item.businessKey && item.dataDate && (!updating || item.existingEntryId));
+  const changingExisting = updating || restoring;
+  const canSave = Boolean(item.businessKey && item.dataDate &&
+    (!changingExisting || item.existingEntryId) && (!restoring || item.restoreHistoryEntryId));
   const unit = item.metricType === 'customers' || item.currency === 'COUNT' ? '人' : '円';
-  const heading = updating ? '経営数値の更新候補があります' : '経営数値の保存候補があります';
-  const valueBlock = updating
-    ? `<p><strong>現在登録されている値</strong></p><h3>${Number(item.previousAmount).toLocaleString('ja-JP')}${unit}</h3><p><strong>新しい値</strong></p><h3>${Number(item.amount).toLocaleString('ja-JP')}${unit}</h3>`
+  const heading = restoring ? '経営数値の復元候補があります' : updating ? '経営数値の更新候補があります' : '経営数値の保存候補があります';
+  const valueBlock = changingExisting
+    ? `<p><strong>現在登録されている値</strong></p><h3>${Number(item.previousAmount).toLocaleString('ja-JP')}${unit}</h3><p><strong>${restoring ? '変更履歴上の最初の値' : '新しい値'}</strong></p><h3>${Number(item.amount).toLocaleString('ja-JP')}${unit}</h3>`
     : `<h3>${Number(item.amount).toLocaleString('ja-JP')}${unit}</h3>`;
-  const confirmText = updating
-    ? '現在値と新しい値を確認して「確認して更新」を押した場合だけ更新します。'
-    : '内容を確認して「確認して保存」を押した場合だけ保存します。';
-  return `<section class="memory-candidate notice" aria-label="${heading}"><strong>${heading}</strong><p>まだ${updating ? '更新' : '保存'}していません。内容を確認してください。</p><small>${safe(labels[item.metricType] || item.metricType)} ・ ${safe(date)}</small>${valueBlock}<p>${safe(item.originalText)}</p><p>${canSave ? confirmText : '事業名・日付・更新対象を安全に特定できないため、この候補は反映できません。内容を含めてもう一度入力してください。'}</p><div class="knowledge-actions">${canSave ? `<button type="button" class="primary" data-management-accept="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>${updating ? '確認して更新' : '確認して保存'}</button>` : ''}<button type="button" class="secondary" data-management-dismiss="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>${updating ? '今回は更新しない' : '今回は保存しない'}</button></div></section>`;
+  const confirmText = restoring
+    ? '現在値と変更履歴上の最初の値を確認して「確認して復元」を押した場合だけ更新します。'
+    : updating
+      ? '現在値と新しい値を確認して「確認して更新」を押した場合だけ更新します。'
+      : '内容を確認して「確認して保存」を押した場合だけ保存します。';
+  const actionLabel = restoring ? '確認して復元' : updating ? '確認して更新' : '確認して保存';
+  const dismissLabel = restoring ? '今回は復元しない' : updating ? '今回は更新しない' : '今回は保存しない';
+  const pendingVerb = restoring ? '復元' : updating ? '更新' : '保存';
+  return `<section class="memory-candidate notice" aria-label="${heading}"><strong>${heading}</strong><p>まだ${pendingVerb}していません。内容を確認してください。</p><small>${safe(labels[item.metricType] || item.metricType)} ・ ${safe(date)}</small>${valueBlock}<p>${safe(item.originalText)}</p><p>${canSave ? confirmText : '事業名・日付・更新対象を安全に特定できないため、この候補は反映できません。内容を含めてもう一度入力してください。'}</p><div class="knowledge-actions">${canSave ? `<button type="button" class="primary" data-management-accept="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>${actionLabel}</button>` : ''}<button type="button" class="secondary" data-management-dismiss="${safe(item.id)}" ${item.pending ? 'disabled' : ''}>${dismissLabel}</button></div></section>`;
 }
 
 async function decideManagementDataCandidate(id, accept) {
@@ -150,7 +158,7 @@ async function decideManagementDataCandidate(id, accept) {
   if (!accept) {
     managementDataProposals = managementDataProposals.filter(candidate => candidate.id !== id);
     render();
-    showToast(item.operation === 'update' ? '今回は経営数値を更新しません。' : '今回は経営数値を保存しません。');
+    showToast(item.operation === 'restore' ? '今回は経営数値を復元しません。' : item.operation === 'update' ? '今回は経営数値を更新しません。' : '今回は経営数値を保存しません。');
     return;
   }
   item.pending = true; render();
@@ -169,14 +177,15 @@ async function decideManagementDataCandidate(id, accept) {
         operation:item.operation || 'create',
         existingEntryId:item.existingEntryId || null,
         previousAmount:item.previousAmount ?? null,
-        previousCurrency:item.previousCurrency || null
+        previousCurrency:item.previousCurrency || null,
+        restoreHistoryEntryId:item.restoreHistoryEntryId || null
       })
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || '保存できませんでした。');
     managementDataProposals = managementDataProposals.filter(candidate => candidate.id !== id);
     render();
-    showToast(result.duplicate ? '同じ経営数値は登録済みのため、重複保存しませんでした。' : result.updated ? '確認した経営数値を更新しました。' : '確認した経営数値を保存しました。');
+    showToast(result.alreadyInitial ? '現在値はすでに変更履歴上の最初の値です。' : result.restored ? '確認した経営数値を最初の値へ復元しました。' : result.duplicate ? '同じ経営数値は登録済みのため、重複保存しませんでした。' : result.updated ? '確認した経営数値を更新しました。' : '確認した経営数値を保存しました。');
   } catch (error) {
     item.pending = false; render(); showToast(error.message);
   }

@@ -5,6 +5,8 @@ const assert = require('node:assert/strict');
 const {
   detectManagementDataHistoryQuery,
   detectManagementDataHistoryFollowUp,
+  isInitialManagementDataRestorePhrase,
+  detectManagementDataRestoreRequest,
   managementDataHistoryAnswer
 } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
@@ -259,4 +261,83 @@ test('Phase 6.41 ignores unrelated prior turns and uses the latest valid managem
   assert.equal(result.dataDate, '2026-08-15');
   assert.equal(result.metricType, 'revenue');
   assert.equal(result.includeSourceText, true);
+});
+
+
+test('Phase 6.42 detects an explicit request to restore a dated metric to its first audited value', () => {
+  assert.equal(isInitialManagementDataRestorePhrase('最初の値に戻して'), true);
+  assert.deepEqual(
+    detectManagementDataRestoreRequest('2026年8月15日のNORTH STAR BEANSの売上を最初の値に戻して'),
+    {
+      businessKey:'north-star-beans',
+      dataDate:'2026-08-15',
+      metricType:'revenue',
+      restoreTarget:'initial'
+    }
+  );
+});
+
+test('Phase 6.42 resolves 「最初の値に戻して」 only from very recent audit-history context', () => {
+  const history = [
+    { role:'user', content:'2026年8月15日のNORTH STAR BEANSの売上は誰がなぜ変更したの？' },
+    { role:'assistant', content:'変更履歴は2件です。' },
+    { role:'user', content:'そのとき私が実際に何と入力したの？' },
+    { role:'assistant', content:'確認時の入力文を表示しました。' }
+  ];
+  assert.deepEqual(
+    detectManagementDataRestoreRequest('最初の値に戻して', history),
+    {
+      businessKey:'north-star-beans',
+      dataDate:'2026-08-15',
+      metricType:'revenue',
+      restoreTarget:'initial'
+    }
+  );
+});
+
+test('Phase 6.42 refuses to infer a restore target from stale conversation context', () => {
+  const history = [
+    { role:'user', content:'2026年8月15日の売上の変更履歴を教えて' },
+    { role:'assistant', content:'変更履歴は2件です。' },
+    { role:'user', content:'別の話をします' },
+    { role:'assistant', content:'はい。' },
+    { role:'user', content:'広告について教えて' },
+    { role:'assistant', content:'広告について回答します。' }
+  ];
+  assert.equal(detectManagementDataRestoreRequest('最初の値に戻して', history), null);
+});
+
+test('Phase 6.42 does not treat an ambiguous previous-value request as an initial-value restore', () => {
+  assert.equal(isInitialManagementDataRestorePhrase('前の値に戻して'), false);
+  assert.equal(detectManagementDataRestoreRequest('前の値に戻して', []), null);
+});
+
+test('Phase 6.42 history details identify an owner-confirmed history restore without inventing another reason', () => {
+  const answer = managementDataHistoryAnswer([
+    {
+      business_key:'north-star-beans',
+      previous_amount:'126000.00',
+      new_amount:'125000.00',
+      previous_currency:'JPY',
+      new_currency:'JPY',
+      source:'owner confirmed history restore',
+      change_note:'最初の値に戻して',
+      confirmed_by_owner:true,
+      changed_at:'2026-09-26T13:30:00.000Z'
+    }
+  ], {
+    business_key:'north-star-beans',
+    amount:'125000.00',
+    currency:'JPY'
+  }, {
+    businessKey:'north-star-beans',
+    dataDate:'2026-08-15',
+    metricType:'revenue',
+    includeActor:true,
+    includeReason:true,
+    includeSourceText:true
+  });
+  assert.match(answer, /変更者：オーナー本人/);
+  assert.match(answer, /変更履歴から最初の値へ復元/);
+  assert.match(answer, /確認時の入力文：「最初の値に戻して」/);
 });

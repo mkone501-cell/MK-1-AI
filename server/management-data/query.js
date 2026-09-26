@@ -226,6 +226,61 @@ function detectManagementDataHistoryFollowUp(message, history = []) {
   return null;
 }
 
+function isInitialManagementDataRestorePhrase(message) {
+  const text = String(message || '').trim();
+  if (!text) return false;
+  const initial = '(?:一番最初|最初|当初|初回)';
+  const value = '(?:の)?(?:登録(?:されていた)?(?:値|数値|金額)?|値|数値|金額)?';
+  const restore = '(?:に)?(?:戻して|戻す|復元して|復元する)';
+  return new RegExp(initial + '[^。！？\\n]{0,24}' + value + '[^。！？\\n]{0,12}' + restore).test(text)
+    || new RegExp('(?:戻して|戻す|復元して|復元する)[^。！？\\n]{0,24}' + initial).test(text);
+}
+
+function managementHistoryMetricType(text) {
+  const value = String(text || '');
+  return /客単価|平均客単価/.test(value)
+    ? 'average_spend'
+    : /来客数|客数|来店客数/.test(value)
+      ? 'customers'
+      : /経費|費用/.test(value)
+        ? 'expense'
+        : /利益|営業利益/.test(value)
+          ? 'profit'
+          : /現金残高|預金残高/.test(value)
+            ? 'cash_balance'
+            : /売上/.test(value)
+              ? 'revenue'
+              : null;
+}
+
+function detectManagementDataRestoreRequest(message, history = []) {
+  const text = String(message || '').trim();
+  if (!isInitialManagementDataRestorePhrase(text)) return null;
+
+  const { businessKey, dataDate } = parseBusinessAndDate(text);
+  const metricType = managementHistoryMetricType(text);
+  if (dataDate && metricType) {
+    return { businessKey, dataDate, metricType, restoreTarget:'initial' };
+  }
+
+  // A write request without its own date/metric may only inherit from the very recent
+  // audit-history conversation. Older unrelated context is deliberately ignored.
+  const turns = Array.isArray(history) ? history.slice(-4) : [];
+  for (let index = turns.length - 1; index >= 0; index--) {
+    const turn = turns[index];
+    if (!turn || turn.role !== 'user') continue;
+    const previous = detectManagementDataHistoryQuery(turn.content);
+    if (!previous) continue;
+    return {
+      businessKey:previous.businessKey,
+      dataDate:previous.dataDate,
+      metricType:previous.metricType,
+      restoreTarget:'initial'
+    };
+  }
+  return null;
+}
+
 function formatManagementHistoryValue(amount, currency) {
   const value = Number(amount);
   if (!Number.isFinite(value)) return null;
@@ -259,6 +314,9 @@ function managementHistoryReason(row) {
   const source = String(row?.source || '').trim();
   if (source === 'owner confirmed correction') {
     return '記録上は「オーナー確認による訂正」です。具体的な訂正理由は記録されていません。';
+  }
+  if (source === 'owner confirmed history restore') {
+    return '記録上は「変更履歴から最初の値へ復元」です。復元の指示内容は確認時の入力文に記録されています。';
   }
   if (source === 'owner confirmed conversation') {
     return 'オーナーが会話内容を確認して保存しました。';
@@ -988,4 +1046,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, managementDataHistoryAnswer, formatManagementHistoryValue, formatManagementHistoryChangedAt, detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, managementDataHistoryAnswer, formatManagementHistoryValue, formatManagementHistoryChangedAt, detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
