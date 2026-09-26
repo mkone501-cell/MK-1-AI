@@ -1067,7 +1067,7 @@ test('Phase 6.45 whole-business current lookup is owner, business and confirmati
   await repo.findBusinessCurrent('owner@example.com', 'north-star-beans');
   assert.deepEqual(seen.params, ['owner@example.com', 'north-star-beans']);
   assert.match(seen.sql, /FROM management_data/);
-  assert.match(seen.sql, /history\.owner_email = \$1 AND history\.business_key = \$2/);
+  assert.match(seen.sql, /owner_email = \$1 AND business_key = \$2/);
   assert.match(seen.sql, /confirmed_by_owner = TRUE/);
   assert.doesNotMatch(seen.sql, /DISTINCT ON/);
 });
@@ -1079,7 +1079,7 @@ test('Phase 6.45 whole-business history lookup is owner, business and confirmati
   await repo.findBusinessHistory('owner@example.com', 'north-star-beans');
   assert.deepEqual(seen.params, ['owner@example.com', 'north-star-beans']);
   assert.match(seen.sql, /FROM management_data_history/);
-  assert.match(seen.sql, /owner_email = \$1 AND business_key = \$2/);
+  assert.match(seen.sql, /history\.owner_email = \$1 AND history\.business_key = \$2/);
   assert.match(seen.sql, /confirmed_by_owner = TRUE/);
   assert.match(seen.sql, /ORDER BY history\.data_date ASC, history\.metric_type ASC, history\.changed_at ASC, history\.id ASC/);
 });
