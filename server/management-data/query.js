@@ -168,6 +168,83 @@ function detectManagementAnalysisFocus(text) {
   return null;
 }
 
+function detectManagementDataHistoryQuery(message) {
+  const text = String(message || '').trim();
+  if (!text) return null;
+  const historyRequested = /(?:変更履歴|更新履歴|訂正履歴|修正履歴|何円から何円|いつ[^。！？\n]{0,30}(?:変更|更新|訂正)|(?:変更|更新|訂正)[^。！？\n]{0,30}いつ)/.test(text);
+  if (!historyRequested) return null;
+  const { businessKey, dataDate } = parseBusinessAndDate(text);
+  const metricType = /客単価|平均客単価/.test(text)
+    ? 'average_spend'
+    : /来客数|客数|来店客数/.test(text)
+      ? 'customers'
+      : /経費|費用/.test(text)
+        ? 'expense'
+        : /利益|営業利益/.test(text)
+          ? 'profit'
+          : /現金残高|預金残高/.test(text)
+            ? 'cash_balance'
+            : /売上/.test(text)
+              ? 'revenue'
+              : null;
+  if (!dataDate || !metricType) return null;
+  return { businessKey, dataDate, metricType };
+}
+
+function formatManagementHistoryValue(amount, currency) {
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return null;
+  const rounded = Number.isInteger(value) ? value : Number(value.toFixed(2));
+  const unit = currency === 'JPY' ? '円' : currency === 'COUNT' ? '人' : currency ? ` ${currency}` : '';
+  return `${rounded.toLocaleString('ja-JP')}${unit}`;
+}
+
+function formatManagementHistoryChangedAt(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat('ja-JP', {
+    timeZone:'Asia/Tokyo',
+    year:'numeric',
+    month:'2-digit',
+    day:'2-digit',
+    hour:'2-digit',
+    minute:'2-digit',
+    hour12:false
+  }).formatToParts(date);
+  const part = type => parts.find(item => item.type === type)?.value || '';
+  return `${part('year')}/${part('month')}/${part('day')} ${part('hour')}:${part('minute')}`;
+}
+
+function managementDataHistoryAnswer(entries, currentEntry, query = {}) {
+  const rows = (Array.isArray(entries) ? entries : []).filter(Boolean);
+  const businessKeys = [...new Set(rows.map(row => String(row.business_key || '').trim()).filter(Boolean))];
+  const businessKey = query.businessKey || currentEntry?.business_key || (businessKeys.length === 1 ? businessKeys[0] : null);
+  if (!query.businessKey && businessKeys.length > 1) {
+    return '同じ日・同じ項目に複数事業の変更履歴があります。事業名を指定して聞いてください。';
+  }
+  const businessName = businessKey === 'north-star-beans' ? 'NORTH STAR BEANS' : businessKey || '対象事業';
+  const metricNames = { revenue:'売上', expense:'経費', profit:'利益', customers:'来客数', average_spend:'客単価', cash_balance:'現金残高' };
+  const metricName = metricNames[query.metricType] || query.metricType || '経営数値';
+  const dateLabel = String(query.dataDate || '').replace(/^(\d{4})-(\d{2})-(\d{2})$/, (_, y, m, d) => `${Number(y)}年${Number(m)}月${Number(d)}日`);
+  const currentValue = currentEntry ? formatManagementHistoryValue(currentEntry.amount, currentEntry.currency) : null;
+
+  if (!rows.length) {
+    const currentText = currentValue ? ` 現在の登録値は${currentValue}です。` : '';
+    return `${dateLabel || '指定日'}の${businessName}の${metricName}には、保存されている変更履歴はありません。${currentText}`.trim();
+  }
+
+  const lines = rows.map((row, index) => {
+    const before = formatManagementHistoryValue(row.previous_amount, row.previous_currency) || '不明';
+    const after = formatManagementHistoryValue(row.new_amount, row.new_currency) || '不明';
+    const changedAt = formatManagementHistoryChangedAt(row.changed_at);
+    return `${index + 1}. ${changedAt ? `${changedAt}：` : ''}${before} → ${after}`;
+  });
+  const currentText = currentValue
+    ? `\n現在の登録値は${currentValue}です。`
+    : `\n現在値は変更履歴だけでは確定できません。`;
+  return `${dateLabel || '指定日'}の${businessName}の${metricName}の変更履歴は${rows.length}件です。\n${lines.join('\n')}${currentText}`;
+}
+
 function detectManagementDataQuery(message) {
   const text = String(message || '').trim();
   if (!text) return null;
@@ -845,4 +922,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { detectManagementDataHistoryQuery, managementDataHistoryAnswer, formatManagementHistoryValue, formatManagementHistoryChangedAt, detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
