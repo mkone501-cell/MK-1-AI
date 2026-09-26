@@ -185,3 +185,24 @@ test('Phase 6.42 restore is never auto-applied by the chat route', () => {
   assert.doesNotMatch(chatSource, /managementData\.update\(auth\.ownerEmail/);
   assert.match(chatSource, /managementDataCandidates/);
 });
+
+
+test('Phase 6.43 routes current-value and last-change questions to deterministic confirmed-data answers', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /detectManagementDataCurrentStateQuery\(message, history\)/);
+  assert.match(source, /managementData\.findHistory\(auth\.ownerEmail, currentStateQuery\)/);
+  assert.match(source, /managementData\.findExact\(auth\.ownerEmail, resolvedStateQuery\)/);
+  assert.match(source, /managementDataCurrentStateAnswer\(currentStateEntry, stateHistoryEntries, resolvedStateQuery\)/);
+  assert.match(source, /restoreQuery \|\| currentStateQuery \? null/);
+});
+
+test('Phase 6.43 keeps current-state lookup owner-scoped and read-only', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  const currentStateStart = source.indexOf('const currentStateQuery =');
+  const historyStart = source.indexOf('const historyQuery =', currentStateStart);
+  assert.ok(currentStateStart >= 0 && historyStart > currentStateStart);
+  const currentStateBlock = source.slice(currentStateStart, historyStart);
+  assert.match(currentStateBlock, /auth\.ownerEmail/);
+  assert.doesNotMatch(currentStateBlock, /managementData\.update\(/);
+  assert.doesNotMatch(currentStateBlock, /managementData\.create\(/);
+});
