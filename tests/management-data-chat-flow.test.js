@@ -153,6 +153,8 @@ test('Phase 6.41 resolves contextual management-history details from persisted c
 test('Phase 6.42 creates a restore candidate from the earliest owner-scoped audit entry without writing immediately', () => {
   const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
   assert.match(source, /detectManagementDataRestoreRequest\(message, history\)/);
+  assert.match(source, /managementDataCandidates = \[\]/);
+  assert.match(source, /managementDataDuplicateCount = 0/);
   assert.match(source, /const restoreHistory = await managementData\.findHistory\(auth\.ownerEmail, restoreQuery\)/);
   assert.match(source, /const initialHistory = restoreHistory\[0\]/);
   assert.match(source, /operation:'restore'/);
