@@ -234,7 +234,7 @@ class PostgresManagementDataRepository {
                WHERE locked.id IS NULL OR expected.id IS NULL
                   OR locked.amount IS DISTINCT FROM expected.amount
                   OR BTRIM(UPPER(locked.currency)) IS DISTINCT FROM BTRIM(UPPER(expected.currency))
-                  OR locked.updated_at IS DISTINCT FROM expected.updated_at
+                  OR date_trunc('milliseconds', locked.updated_at) IS DISTINCT FROM expected.updated_at
             )
        ),
        resolved AS (
