@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
+const { detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
 
 test('Phase 6.7 parses a confirmed management-data fact question', () => {
@@ -866,4 +866,34 @@ test('Phase 6.30 focused profitability context keeps only profitability-related 
   assert.match(context.body, /ユーザーは収益性に絞った分析を求めています/);
   assert.match(context.body, /利益整合性/);
   assert.doesNotMatch(context.body, /来客数80人/);
+});
+
+
+test('Phase 6.31 detects focused analysis domain consistently', () => {
+  assert.equal(detectManagementAnalysisFocus('売上推移を分析して'), 'sales');
+  assert.equal(detectManagementAnalysisFocus('収益性を分析して'), 'profit');
+  assert.equal(detectManagementAnalysisFocus('来客数と客単価を分析して'), 'traffic');
+  assert.equal(detectManagementAnalysisFocus('現金残高を分析して'), 'cash');
+  assert.equal(detectManagementAnalysisFocus('経営状況を分析して'), null);
+});
+
+test('Phase 6.31 attaches sales focus to a single-month sales analysis', () => {
+  assert.deepEqual(
+    detectManagementDataQuery('2026年9月のNORTH STAR BEANSの売上を分析して'),
+    { businessKey:'north-star-beans', metricType:'period_analysis', startDate:'2026-09-01', endDate:'2026-09-30', analysisFocus:'sales' }
+  );
+});
+
+test('Phase 6.31 attaches sales focus to an explicit date-range sales analysis', () => {
+  assert.deepEqual(
+    detectManagementDataQuery('2026年9月21日から9月22日までのNORTH STAR BEANSの売上推移を分析して'),
+    { businessKey:'north-star-beans', metricType:'period_analysis', startDate:'2026-09-21', endDate:'2026-09-22', analysisFocus:'sales' }
+  );
+});
+
+test('Phase 6.31 keeps general monthly management analysis unfocused', () => {
+  assert.deepEqual(
+    detectManagementDataQuery('2026年9月のNORTH STAR BEANSの経営状況を分析して'),
+    { businessKey:'north-star-beans', metricType:'period_analysis', startDate:'2026-09-01', endDate:'2026-09-30' }
+  );
 });
