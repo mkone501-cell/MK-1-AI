@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   detectManagementDataHistoryQuery,
+  detectManagementDataHistoryFollowUp,
   managementDataHistoryAnswer
 } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
@@ -196,4 +197,66 @@ test('Phase 6.40 states when a specific change reason was not recorded', () => {
 
   assert.match(answer, /変更理由は個別には記録されていません/);
   assert.match(answer, /確認時の入力文：記録されていません/);
+});
+
+
+test('Phase 6.41 resolves 「そのとき何と入力したの？」 from the previous dated history question', () => {
+  const history = [
+    { role:'user', content:'2026年8月15日のNORTH STAR BEANSの売上は誰がなぜ変更したの？' },
+    { role:'assistant', content:'2026年8月15日のNORTH STAR BEANSの売上の変更履歴は2件です。' }
+  ];
+
+  assert.deepEqual(
+    detectManagementDataHistoryFollowUp('そのとき私が実際に何と入力したの？', history),
+    {
+      businessKey:'north-star-beans',
+      dataDate:'2026-08-15',
+      metricType:'revenue',
+      includeActor:false,
+      includeReason:false,
+      includeSourceText:true
+    }
+  );
+});
+
+test('Phase 6.41 can switch a prior history question into a contextual actor-and-reason follow-up', () => {
+  const history = [
+    { role:'user', content:'2026年8月15日の売上の変更履歴を教えて' },
+    { role:'assistant', content:'変更履歴は2件です。' }
+  ];
+
+  assert.deepEqual(
+    detectManagementDataHistoryFollowUp('その変更は誰が、なぜしたの？', history),
+    {
+      businessKey:null,
+      dataDate:'2026-08-15',
+      metricType:'revenue',
+      includeActor:true,
+      includeReason:true,
+      includeSourceText:false
+    }
+  );
+});
+
+test('Phase 6.41 does not guess a history target when the contextual reference is missing', () => {
+  const history = [
+    { role:'user', content:'2026年8月15日の売上の変更履歴を教えて' }
+  ];
+  assert.equal(
+    detectManagementDataHistoryFollowUp('実際に何と入力しましたか？', history),
+    null
+  );
+});
+
+test('Phase 6.41 ignores unrelated prior turns and uses the latest valid management-history question', () => {
+  const history = [
+    { role:'user', content:'2026年8月15日の売上の変更履歴を教えて' },
+    { role:'assistant', content:'変更履歴は2件です。' },
+    { role:'user', content:'ありがとう' },
+    { role:'assistant', content:'どういたしまして。' }
+  ];
+  const result = detectManagementDataHistoryFollowUp('そのとき何て入力したの？', history);
+  assert.equal(result.dataDate, '2026-08-15');
+  assert.equal(result.metricType, 'revenue');
+  assert.equal(result.includeSourceText, true);
 });
