@@ -285,3 +285,67 @@ test('Phase 6.42 UI shows restore as a separate owner-confirmed action and sends
   assert.match(source, /restoreHistoryEntryId:item\.restoreHistoryEntryId \|\| null/);
   assert.match(source, /result\.restored \? '確認した経営数値を最初の値へ復元しました。'/);
 });
+
+
+test('Phase 6.46 duplicate cleanup UI shows every row and only writes after an explicit keep-row click', async () => {
+  const vm = require('node:vm'), fs = require('node:fs'), path = require('node:path');
+  const calls = [];
+  const context = vm.createContext({
+    module:{ exports:{} }, console, Date, JSON, structuredClone, setTimeout:() => 0,
+    localStorage:{ getItem:()=>null, setItem(){} }, location:{ hash:'#/chat' }, window:{ addEventListener(){} },
+    document:{ querySelector:stub, querySelectorAll:()=>[], createElement:stub, addEventListener(){} },
+    fetch:async (route, options={}) => {
+      calls.push({ route, options });
+      return { ok:true, json:async()=>({ resolved:true, keepEntryId:'7', supersededCount:1 }) };
+    }
+  });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../app.js'), 'utf8'), context);
+  vm.runInContext(`serverConversation = true;
+    managementDataCleanupProposals = [{
+      id:'cleanup-1', operation:'deduplicate', businessKey:'north-star-beans',
+      dataDate:'2026-09-22', metricType:'revenue', recommendedKeepId:'7',
+      recommendationReason:'最終判断は本人が行います。',
+      originalText:'NORTH STAR BEANSの重複データを整理する候補を出して',
+      rows:[
+        { id:'4', amount:160000, currency:'JPY', createdAt:'2026-09-22T10:00:00.000Z', updatedAt:'2026-09-22T10:00:00.000Z', historyCount:0 },
+        { id:'7', amount:161000, currency:'JPY', createdAt:'2026-09-22T11:00:00.000Z', updatedAt:'2026-09-22T11:00:00.000Z', historyCount:1 }
+      ]
+    }];`, context);
+  const html = vm.runInContext('chatView()', context);
+  assert.match(html, /管理ID 4/);
+  assert.match(html, /管理ID 7（残す候補）/);
+  assert.match(html, /ID 4を残して整理/);
+  assert.match(html, /ID 7を残して整理/);
+  assert.match(html, /今回は整理しない/);
+  assert.match(html, /削除せず/);
+  assert.equal(calls.length, 0);
+
+  await vm.runInContext(`decideManagementDataCleanupCandidate('cleanup-1', null)`, context);
+  assert.equal(calls.length, 0);
+
+  vm.runInContext(`managementDataCleanupProposals = [{
+    id:'cleanup-2', operation:'deduplicate', businessKey:'north-star-beans',
+    dataDate:'2026-09-22', metricType:'revenue', recommendedKeepId:'7',
+    originalText:'NORTH STAR BEANSの重複データを整理する候補を出して',
+    rows:[
+      { id:'4', amount:160000, currency:'JPY', updatedAt:'2026-09-22T10:00:00.000Z' },
+      { id:'7', amount:161000, currency:'JPY', updatedAt:'2026-09-22T11:00:00.000Z' }
+    ]
+  }];`, context);
+  await vm.runInContext(`decideManagementDataCleanupCandidate('cleanup-2', '7')`, context);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].route, 'api/management-data/resolve-duplicates');
+  const body = JSON.parse(calls[0].options.body);
+  assert.equal(body.confirmed, true);
+  assert.equal(body.operation, 'deduplicate');
+  assert.equal(body.keepEntryId, '7');
+  assert.equal(body.expectedRows.length, 2);
+});
+
+test('Phase 6.46 new conversations clear unapproved duplicate cleanup candidates', () => {
+  const fs = require('node:fs'), path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, '../app.js'), 'utf8');
+  assert.match(source, /let managementDataCleanupProposals = \[\]/);
+  assert.match(source, /managementDataCleanupProposals = \(result\.managementDataCleanupCandidates \|\| \[\]\)/);
+  assert.match(source, /managementDataCleanupProposals = \[\];[\s\S]*saveState\(\)/);
+});
