@@ -322,6 +322,31 @@ function createApplication(options = {}) {
         if (isSameManagementDataValue(existing, candidate)) {
           return respondJson(req, res, 200, { managementData:existing, duplicate:true });
         }
+        const requestedOperation = body.operation === 'update' ? 'update' : 'create';
+        if (existing) {
+          if (requestedOperation !== 'update') {
+            return respondJson(req, res, 409, { error:'同じ日・同じ項目に別の登録値があります。会話から更新候補を作り直して確認してください。', code:'MANAGEMENT_DATA_UPDATE_REVIEW_REQUIRED' });
+          }
+          const expectedEntryId = typeof body.existingEntryId === 'string' ? body.existingEntryId : '';
+          const expectedPreviousAmount = Number(body.previousAmount);
+          const expectedPreviousCurrency = typeof body.previousCurrency === 'string' ? body.previousCurrency.trim().toUpperCase() : '';
+          if (!UUID.test(expectedEntryId) || existing.id !== expectedEntryId ||
+              !Number.isFinite(expectedPreviousAmount) || Number(existing.amount) !== expectedPreviousAmount ||
+              String(existing.currency || '').trim().toUpperCase() !== expectedPreviousCurrency) {
+            return respondJson(req, res, 409, { error:'既存の経営数値が候補作成後に変更されています。最新の値を確認してから更新してください。', code:'MANAGEMENT_DATA_UPDATE_STALE' });
+          }
+          const updated = await managementData.update(auth.ownerEmail, existing.id, {
+            ...candidate,
+            confirmed:true,
+            source:'owner confirmed correction',
+            note:candidate.originalText
+          });
+          if (!updated) return respondJson(req, res, 409, { error:'更新対象を確認できませんでした。最新の値を確認してください。' });
+          return respondJson(req, res, 200, { managementData:updated, updated:true });
+        }
+        if (requestedOperation === 'update') {
+          return respondJson(req, res, 409, { error:'更新対象の経営数値が見つかりません。最新の状態を確認してからもう一度入力してください。', code:'MANAGEMENT_DATA_UPDATE_MISSING' });
+        }
         const saved = await managementData.create(auth.ownerEmail, {
           ...candidate,
           confirmed:true,
@@ -380,8 +405,18 @@ function createApplication(options = {}) {
                     managementDataDuplicateCount++;
                     continue;
                   }
+                  if (existing) {
+                    pendingCandidates.push({
+                      ...candidate,
+                      operation:'update',
+                      existingEntryId:existing.id,
+                      previousAmount:Number(existing.amount),
+                      previousCurrency:String(existing.currency || candidate.currency || '').trim().toUpperCase()
+                    });
+                    continue;
+                  }
                 }
-                pendingCandidates.push(candidate);
+                pendingCandidates.push({ ...candidate, operation:'create' });
               }
               managementDataCandidates = pendingCandidates;
             } catch {
