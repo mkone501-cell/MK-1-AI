@@ -163,7 +163,7 @@ async function decideManagementDataCandidate(id, accept) {
     if (!response.ok) throw new Error(result.error || '保存できませんでした。');
     managementDataProposals = managementDataProposals.filter(candidate => candidate.id !== id);
     render();
-    showToast('確認した経営数値を保存しました。');
+    showToast(result.duplicate ? '同じ経営数値は登録済みのため、重複保存しませんでした。' : '確認した経営数値を保存しました。');
   } catch (error) {
     item.pending = false; render(); showToast(error.message);
   }

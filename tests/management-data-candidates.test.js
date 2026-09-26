@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataCandidate, detectManagementDataCandidates, managementDataCandidateAcknowledgement } = require('../server/management-data/candidates');
+const { detectManagementDataCandidate, detectManagementDataCandidates, isSameManagementDataValue, managementDataCandidateAcknowledgement } = require('../server/management-data/candidates');
 
 test('Phase 6.4 detects a factual revenue number but never confirms it automatically', () => {
   const item = detectManagementDataCandidate('2026年9月21日のNORTH STAR BEANSの売上は25万円です。');
@@ -105,4 +105,31 @@ test('Phase 6.35 bundled candidates state the number of pending save candidates'
 
 test('Phase 6.35 has no acknowledgement when there is no save candidate', () => {
   assert.equal(managementDataCandidateAcknowledgement([]), '');
+});
+
+
+test('Phase 6.36 treats the current confirmed value as an exact duplicate even when DB amount is a string', () => {
+  const candidate = detectManagementDataCandidate('2026年8月15日のNORTH STAR BEANSの売上は125000円です');
+  const existing = { amount:'125000.0000', currency:'JPY' };
+  assert.equal(isSameManagementDataValue(existing, candidate), true);
+});
+
+test('Phase 6.36 does not treat a corrected amount as a duplicate', () => {
+  const candidate = detectManagementDataCandidate('2026年8月15日のNORTH STAR BEANSの売上は126000円です');
+  const existing = { amount:'125000.0000', currency:'JPY' };
+  assert.equal(isSameManagementDataValue(existing, candidate), false);
+});
+
+test('Phase 6.36 reports an already-registered value without creating another pending-save claim', () => {
+  const answer = managementDataCandidateAcknowledgement([], 1);
+  assert.equal(answer, '同じ経営数値1件はすでに登録済みのため、重複保存候補にはしません。');
+  assert.doesNotMatch(answer, /保存候補を作成しました/);
+});
+
+test('Phase 6.36 can report duplicates while preserving genuinely new bundled candidates', () => {
+  const pending = detectManagementDataCandidates('2026年9月22日のNORTH STAR BEANSの売上は160000円、来客数は80人、客単価は2000円でした。').slice(1);
+  const answer = managementDataCandidateAcknowledgement(pending, 1);
+  assert.match(answer, /同じ経営数値1件はすでに登録済み/);
+  assert.match(answer, /保存候補を2件作成しました/);
+  assert.match(answer, /まだ保存していません/);
 });

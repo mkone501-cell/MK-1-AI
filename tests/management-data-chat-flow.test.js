@@ -5,7 +5,7 @@ const path = require('node:path');
 
 test('Phase 6.5 wires management-data candidate detection into authenticated chat without auto-save', () => {
   const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
-  assert.match(source, /const managementDataCandidates = detectManagementDataCandidates\(message\)/);
+  assert.match(source, /let managementDataCandidates = detectManagementDataCandidates\(message\)/);
   assert.match(source, /managementDataCandidates\s*\}/);
   assert.match(source, /url\.pathname === '\/api\/management-data\/confirm'/);
   assert.match(source, /body\.confirmed !== true/);
@@ -45,7 +45,22 @@ test('Phase 6.32 routes focused monthly and annual analysis through focused grou
 
 test('Phase 6.35 replaces the model reply with deterministic pending-save wording before confirmation', () => {
   const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
-  assert.match(source, /if \(managementDataCandidates\.length\) \{/);
-  assert.match(source, /answer:managementDataCandidateAcknowledgement\(managementDataCandidates\)/);
+  assert.match(source, /if \(managementDataCandidates\.length \|\| managementDataDuplicateCount\) \{/);
+  assert.match(source, /answer:managementDataCandidateAcknowledgement\(managementDataCandidates, managementDataDuplicateCount\)/);
   assert.match(source, /conversations\.appendExchange[\s\S]*answer:result\.answer/);
+});
+
+
+test('Phase 6.36 filters exact duplicates before exposing save candidates', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /const existing = await managementData\.findExact\(auth\.ownerEmail, candidate\)/);
+  assert.match(source, /isSameManagementDataValue\(existing, candidate\)/);
+  assert.match(source, /managementDataDuplicateCount\+\+/);
+  assert.match(source, /managementDataCandidates = pendingCandidates/);
+});
+
+test('Phase 6.36 rechecks for an exact duplicate inside the confirmed-save endpoint', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /const existing = await managementData\.findExact\(auth\.ownerEmail, candidate\);[\s\S]*duplicate:true/);
+  assert.match(source, /if \(isSameManagementDataValue\(existing, candidate\)\)/);
 });
