@@ -110,3 +110,14 @@ test('Phase 6.37 fix uses BIGSERIAL ids for management-data stale checks rather 
   assert.match(source, /\/\^\\d\+\$\/\.test\(expectedEntryId\)/);
   assert.doesNotMatch(source, /UUID\.test\(expectedEntryId\)/);
 });
+
+
+test('Phase 6.38 runs the management-data history migration and audits confirmed updates', () => {
+  const migrateSource = fs.readFileSync(path.join(__dirname, '../server/management-data/migrate-management-data.js'), 'utf8');
+  const repositorySource = fs.readFileSync(path.join(__dirname, '../server/management-data/postgres-management-data-repository.js'), 'utf8');
+  assert.match(migrateSource, /006_create_management_data_history\.sql/);
+  assert.match(repositorySource, /INSERT INTO management_data_history/);
+  assert.match(repositorySource, /previous_amount/);
+  assert.match(repositorySource, /new_amount/);
+  assert.match(repositorySource, /changed_at/);
+});
