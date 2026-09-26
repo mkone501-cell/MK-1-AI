@@ -9,6 +9,8 @@ const {
   detectManagementDataRestoreRequest,
   detectManagementDataCurrentStateQuery,
   managementDataCurrentStateAnswer,
+  detectManagementDataBusinessAuditQuery,
+  managementDataBusinessAuditAnswer,
   detectManagementDataHistoryConsistencyQuery,
   managementDataHistoryConsistencyAnswer,
   managementDataHistoryAnswer
@@ -616,4 +618,121 @@ test('Phase 6.44 keeps the target after current-value and last-change follow-ups
       metricType:'revenue'
     }
   );
+});
+
+
+test('Phase 6.45 detects an explicit whole-business management consistency audit', () => {
+  assert.deepEqual(
+    detectManagementDataBusinessAuditQuery('NORTH STAR BEANSの経営データ全体に不整合がないか確認して', []),
+    { businessKey:'north-star-beans' }
+  );
+});
+
+test('Phase 6.45 can inherit only the business for a read-only whole-business audit', () => {
+  const history = [
+    { role:'user', content:'2026年8月15日のNORTH STAR BEANSの売上は履歴と一致してる？' },
+    { role:'assistant', content:'履歴と一致しています。' }
+  ];
+  assert.deepEqual(
+    detectManagementDataBusinessAuditQuery('経営データ全体もチェックして', history),
+    { businessKey:'north-star-beans' }
+  );
+});
+
+test('Phase 6.45 does not hijack a single-item consistency question', () => {
+  assert.equal(
+    detectManagementDataBusinessAuditQuery('この売上データは履歴と一致してる？', []),
+    null
+  );
+});
+
+test('Phase 6.45 reports only the summary when all auditable items are consistent', () => {
+  const answer = managementDataBusinessAuditAnswer([
+    {
+      id:'10', business_key:'north-star-beans', data_date:'2026-08-15',
+      metric_type:'revenue', amount:'125000', currency:'JPY'
+    },
+    {
+      id:'11', business_key:'north-star-beans', data_date:'2026-08-15',
+      metric_type:'customers', amount:'80', currency:'COUNT'
+    }
+  ], [
+    {
+      id:'1', management_data_id:'10', business_key:'north-star-beans', data_date:'2026-08-15',
+      metric_type:'revenue', previous_amount:'120000', new_amount:'125000',
+      previous_currency:'JPY', new_currency:'JPY', changed_at:'2026-09-26T10:00:00Z'
+    }
+  ], { businessKey:'north-star-beans' });
+
+  assert.match(answer, /登録済み項目は2件/);
+  assert.match(answer, /不整合は見つかりませんでした/);
+  assert.match(answer, /履歴がある1件は現在値・最新履歴・履歴のつながりが一致しています/);
+  assert.match(answer, /履歴のない1件/);
+  assert.doesNotMatch(answer, /問題がある項目だけ表示します/);
+});
+
+test('Phase 6.45 lists mismatches and broken history chains without auto-repair', () => {
+  const answer = managementDataBusinessAuditAnswer([
+    {
+      id:'10', business_key:'north-star-beans', data_date:'2026-08-15',
+      metric_type:'revenue', amount:'124000', currency:'JPY'
+    },
+    {
+      id:'11', business_key:'north-star-beans', data_date:'2026-08-16',
+      metric_type:'revenue', amount:'130000', currency:'JPY'
+    }
+  ], [
+    {
+      id:'1', management_data_id:'10', business_key:'north-star-beans', data_date:'2026-08-15',
+      metric_type:'revenue', previous_amount:'120000', new_amount:'125000',
+      previous_currency:'JPY', new_currency:'JPY', changed_at:'2026-09-26T10:00:00Z'
+    },
+    {
+      id:'2', management_data_id:'11', business_key:'north-star-beans', data_date:'2026-08-16',
+      metric_type:'revenue', previous_amount:'126000', new_amount:'128000',
+      previous_currency:'JPY', new_currency:'JPY', changed_at:'2026-09-26T11:00:00Z'
+    },
+    {
+      id:'3', management_data_id:'11', business_key:'north-star-beans', data_date:'2026-08-16',
+      metric_type:'revenue', previous_amount:'129000', new_amount:'130000',
+      previous_currency:'JPY', new_currency:'JPY', changed_at:'2026-09-26T12:00:00Z'
+    }
+  ], { businessKey:'north-star-beans' });
+
+  assert.match(answer, /不整合が2件見つかりました/);
+  assert.match(answer, /2026\/08\/15 売上: 現在値124,000円と最新履歴の変更後の値125,000円が一致していません/);
+  assert.match(answer, /2026\/08\/16 売上: 履歴1件目から2件目の値が連続していません/);
+  assert.match(answer, /問題がある項目だけ表示します/);
+  assert.match(answer, /自動修正はしていません/);
+});
+
+test('Phase 6.45 detects duplicate current rows for the same date and metric', () => {
+  const answer = managementDataBusinessAuditAnswer([
+    {
+      id:'10', business_key:'north-star-beans', data_date:'2026-08-15',
+      metric_type:'revenue', amount:'125000', currency:'JPY'
+    },
+    {
+      id:'12', business_key:'north-star-beans', data_date:'2026-08-15',
+      metric_type:'revenue', amount:'126000', currency:'JPY'
+    }
+  ], [], { businessKey:'north-star-beans' });
+
+  assert.match(answer, /不整合が1件見つかりました/);
+  assert.match(answer, /現在の本人確認済み登録値が2行あります/);
+  assert.match(answer, /管理ID: 10, 12/);
+});
+
+test('Phase 6.45 detects audit history without a corresponding current confirmed row', () => {
+  const answer = managementDataBusinessAuditAnswer([], [
+    {
+      id:'1', management_data_id:'99', business_key:'north-star-beans', data_date:'2026-08-15',
+      metric_type:'revenue', previous_amount:'120000', new_amount:'125000',
+      previous_currency:'JPY', new_currency:'JPY', changed_at:'2026-09-26T10:00:00Z'
+    }
+  ], { businessKey:'north-star-beans' });
+
+  assert.match(answer, /不整合が1件見つかりました/);
+  assert.match(answer, /対応する現在の本人確認済み登録行が見つかりません/);
+  assert.match(answer, /管理ID: 99/);
 });
