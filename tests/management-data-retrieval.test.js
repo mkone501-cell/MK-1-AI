@@ -1058,3 +1058,28 @@ test('Phase 6.34 embeds deterministic period comparison in focused monthly compa
   assert.match(context.body, /合計は直接比較せず/);
   assert.match(context.body, /登録日平均を比較/);
 });
+
+
+test('Phase 6.45 whole-business current lookup is owner, business and confirmation scoped', async () => {
+  let seen;
+  const pool = { async query(sql, params) { seen = { sql, params }; return { rows:[] }; } };
+  const repo = new PostgresManagementDataRepository(pool);
+  await repo.findBusinessCurrent('owner@example.com', 'north-star-beans');
+  assert.deepEqual(seen.params, ['owner@example.com', 'north-star-beans']);
+  assert.match(seen.sql, /FROM management_data/);
+  assert.match(seen.sql, /owner_email = \$1 AND business_key = \$2/);
+  assert.match(seen.sql, /confirmed_by_owner = TRUE/);
+  assert.doesNotMatch(seen.sql, /DISTINCT ON/);
+});
+
+test('Phase 6.45 whole-business history lookup is owner, business and confirmation scoped', async () => {
+  let seen;
+  const pool = { async query(sql, params) { seen = { sql, params }; return { rows:[] }; } };
+  const repo = new PostgresManagementDataRepository(pool);
+  await repo.findBusinessHistory('owner@example.com', 'north-star-beans');
+  assert.deepEqual(seen.params, ['owner@example.com', 'north-star-beans']);
+  assert.match(seen.sql, /FROM management_data_history/);
+  assert.match(seen.sql, /owner_email = \$1 AND business_key = \$2/);
+  assert.match(seen.sql, /confirmed_by_owner = TRUE/);
+  assert.match(seen.sql, /ORDER BY data_date ASC, metric_type ASC, changed_at ASC, id ASC/);
+});

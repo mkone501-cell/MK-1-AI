@@ -351,6 +351,171 @@ function detectManagementDataCurrentStateQuery(message, history = []) {
   };
 }
 
+function detectManagementDataBusinessAuditQuery(message, history = []) {
+  const text = String(message || '').trim();
+  if (!text) return null;
+
+  const wholeBusiness = /(?:経営(?:データ|数値)|登録(?:済み)?(?:データ|数値)|データ)[^。！？\n]{0,30}(?:全体|全部|すべて|全件|一括)/.test(text)
+    || /(?:全体|全部|すべて|全件|一括)[^。！？\n]{0,30}(?:経営(?:データ|数値)|登録(?:済み)?(?:データ|数値))/.test(text);
+  const auditRequested = /不整合|整合|一致|食い違|ずれ|ズレ|矛盾|監査|チェック|点検|確認/.test(text);
+  if (!wholeBusiness || !auditRequested) return null;
+
+  const direct = parseBusinessAndDate(text);
+  if (direct.businessKey) return { businessKey:direct.businessKey };
+
+  // Read-only whole-business checks may inherit only the business from recent,
+  // explicit management-data context. Dates and metrics are intentionally ignored.
+  const recentTurns = Array.isArray(history) ? history.slice(-8) : [];
+  for (let index = recentTurns.length - 1; index >= 0; index--) {
+    const turn = recentTurns[index];
+    if (!turn || turn.role !== 'user') continue;
+    const target = managementTargetFromExplicitMessage(turn.content);
+    if (target?.businessKey) return { businessKey:target.businessKey };
+  }
+  return null;
+}
+
+function managementAuditDateKey(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+  const match = String(value || '').match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : '';
+}
+
+function managementAuditDateLabel(value) {
+  const key = managementAuditDateKey(value);
+  return key ? key.replace(/-/g, '/') : '日付不明';
+}
+
+function managementAuditMetricLabel(metricType) {
+  return ({
+    revenue:'売上',
+    expense:'経費',
+    profit:'利益',
+    cash_balance:'現金残高',
+    customers:'来客数',
+    average_spend:'客単価',
+    other:'その他'
+  })[metricType] || metricType || '項目不明';
+}
+
+function managementDataBusinessAuditAnswer(currentEntries, historyEntries, query = {}) {
+  const currentRows = (Array.isArray(currentEntries) ? currentEntries : []).filter(Boolean);
+  const historyRows = (Array.isArray(historyEntries) ? historyEntries : []).filter(Boolean);
+  const businessKey = query.businessKey || currentRows[0]?.business_key || historyRows[0]?.business_key || null;
+  const businessName = businessKey === 'north-star-beans' ? 'NORTH STAR BEANS' : businessKey || '対象事業';
+
+  if (!currentRows.length && !historyRows.length) {
+    return `${businessName}には本人確認済みの経営数値が登録されていないため、全体整合性を確認できません。`;
+  }
+
+  const currentByLogicalKey = new Map();
+  const currentIds = new Set();
+  for (const row of currentRows) {
+    const dateKey = managementAuditDateKey(row.data_date);
+    const key = `${dateKey}|${String(row.metric_type || '')}`;
+    if (!currentByLogicalKey.has(key)) currentByLogicalKey.set(key, []);
+    currentByLogicalKey.get(key).push(row);
+    currentIds.add(String(row.id ?? ''));
+  }
+
+  const historyByEntryId = new Map();
+  for (const row of historyRows) {
+    const id = String(row.management_data_id ?? '');
+    if (!historyByEntryId.has(id)) historyByEntryId.set(id, []);
+    historyByEntryId.get(id).push(row);
+  }
+  for (const rows of historyByEntryId.values()) {
+    rows.sort((a, b) => {
+      const aTime = new Date(a.changed_at || 0).getTime();
+      const bTime = new Date(b.changed_at || 0).getTime();
+      if (aTime !== bTime) return aTime - bTime;
+      return Number(a.id || 0) - Number(b.id || 0);
+    });
+  }
+
+  const issues = [];
+  let consistentCount = 0;
+  let noHistoryCount = 0;
+  let duplicateCount = 0;
+
+  for (const rows of currentByLogicalKey.values()) {
+    const sample = rows[0];
+    const label = `${managementAuditDateLabel(sample.data_date)} ${managementAuditMetricLabel(sample.metric_type)}`;
+
+    if (rows.length > 1) {
+      duplicateCount += 1;
+      const ids = rows.map(row => String(row.id ?? '?')).join(', ');
+      issues.push(`${label}: 現在の本人確認済み登録値が${rows.length}行あります（管理ID: ${ids}）。1つの値として安全に判定できません`);
+      continue;
+    }
+
+    const current = sample;
+    const entryHistory = historyByEntryId.get(String(current.id ?? '')) || [];
+    if (!entryHistory.length) {
+      noHistoryCount += 1;
+      continue;
+    }
+
+    const localIssues = [];
+    const latest = entryHistory.at(-1);
+    const sameLatestValue = Number(current.amount) === Number(latest.new_amount)
+      && String(current.currency || '').trim().toUpperCase() === String(latest.new_currency || '').trim().toUpperCase();
+    if (!sameLatestValue) {
+      localIssues.push(`現在値${formatManagementHistoryValue(current.amount, current.currency) || '不明'}と最新履歴の変更後の値${formatManagementHistoryValue(latest.new_amount, latest.new_currency) || '不明'}が一致していません`);
+    }
+
+    for (let index = 0; index < entryHistory.length; index++) {
+      const row = entryHistory[index];
+      if (String(row.management_data_id ?? '') !== String(current.id ?? '')) {
+        localIssues.push(`履歴${index + 1}件目が別の管理IDを参照しています`);
+      }
+      if (managementAuditDateKey(row.data_date) !== managementAuditDateKey(current.data_date)
+          || String(row.metric_type || '') !== String(current.metric_type || '')) {
+        localIssues.push(`履歴${index + 1}件目の日付または項目が現在値と一致していません`);
+      }
+      if (index === 0) continue;
+      const previous = entryHistory[index - 1];
+      const amountContinues = Number(previous.new_amount) === Number(row.previous_amount);
+      const currencyContinues = String(previous.new_currency || '').trim().toUpperCase()
+        === String(row.previous_currency || '').trim().toUpperCase();
+      if (!amountContinues || !currencyContinues) {
+        localIssues.push(`履歴${index}件目から${index + 1}件目の値が連続していません`);
+      }
+    }
+
+    if (localIssues.length) {
+      issues.push(`${label}: ${[...new Set(localIssues)].join('／')}`);
+    } else {
+      consistentCount += 1;
+    }
+  }
+
+  for (const [entryId, rows] of historyByEntryId.entries()) {
+    if (currentIds.has(entryId)) continue;
+    const sample = rows[0];
+    issues.push(`${managementAuditDateLabel(sample?.data_date)} ${managementAuditMetricLabel(sample?.metric_type)}: 変更履歴はありますが、対応する現在の本人確認済み登録行が見つかりません（管理ID: ${entryId || '不明'}）`);
+  }
+
+  const checkedLogicalCount = currentByLogicalKey.size;
+  const header = `${businessName}の経営データ全体を確認しました。登録済み項目は${checkedLogicalCount}件です。`;
+
+  if (!issues.length) {
+    const historyNote = noHistoryCount
+      ? ` そのうち履歴がある${consistentCount}件は現在値・最新履歴・履歴のつながりが一致しています。履歴のない${noHistoryCount}件は、まだ変更されたことがないため履歴照合の対象外です。`
+      : ` ${consistentCount}件すべてで現在値・最新履歴・履歴のつながりが一致しています。`;
+    return `${header} 不整合は見つかりませんでした。${historyNote}`;
+  }
+
+  const maxDetails = 20;
+  const detailLines = issues.slice(0, maxDetails).map(item => `- ${item}`);
+  if (issues.length > maxDetails) detailLines.push(`- ほか${issues.length - maxDetails}件の不整合があります`);
+  const noHistoryNote = noHistoryCount
+    ? `\n履歴のない${noHistoryCount}件は、まだ変更されたことがないため履歴照合の対象外です。`
+    : '';
+  const duplicateNote = duplicateCount ? ` 重複登録を含む論理項目は${duplicateCount}件です。` : '';
+  return `${header} 不整合が${issues.length}件見つかりました。${duplicateNote} 問題がある項目だけ表示します。\n${detailLines.join('\n')}${noHistoryNote}\n自動修正はしていません。`;
+}
+
 function detectManagementDataHistoryConsistencyQuery(message, history = []) {
   const text = String(message || '').trim();
   if (!text) return null;
@@ -1248,4 +1413,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, detectManagementDataHistoryConsistencyQuery, managementDataHistoryConsistencyAnswer, managementDataHistoryAnswer, formatManagementHistoryValue, formatManagementHistoryChangedAt, detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, detectManagementDataBusinessAuditQuery, managementDataBusinessAuditAnswer, detectManagementDataHistoryConsistencyQuery, managementDataHistoryConsistencyAnswer, managementDataHistoryAnswer, formatManagementHistoryValue, formatManagementHistoryChangedAt, detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };

@@ -21,7 +21,7 @@ const { proposeMemory } = require('./knowledge/update-candidates');
 const { detectManagementDataCandidate, detectManagementDataCandidates, isSameManagementDataValue, managementDataCandidateAcknowledgement } = require('./management-data/candidates');
 const { PostgresManagementDataRepository } = require('./management-data/postgres-management-data-repository');
 const { migrateManagementData } = require('./management-data/migrate-management-data');
-const { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, detectManagementDataHistoryConsistencyQuery, managementDataHistoryConsistencyAnswer, managementDataHistoryAnswer, detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
+const { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, detectManagementDataBusinessAuditQuery, managementDataBusinessAuditAnswer, detectManagementDataHistoryConsistencyQuery, managementDataHistoryConsistencyAnswer, managementDataHistoryAnswer, detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
 
 const ROOT = path.resolve(__dirname, '..');
 const MAX_BODY_BYTES = 32 * 1024;
@@ -555,7 +555,24 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'経営数値の現在値・変更日時を確認できませんでした。時間をおいてお試しください。' });
               }
             }
-            const consistencyQuery = restoreQuery || currentStateQuery
+            const businessAuditQuery = restoreQuery || currentStateQuery
+              ? null
+              : detectManagementDataBusinessAuditQuery(message, history);
+            if (businessAuditQuery) {
+              try {
+                const businessCurrentEntries = await managementData.findBusinessCurrent(auth.ownerEmail, businessAuditQuery.businessKey);
+                const businessHistoryEntries = await managementData.findBusinessHistory(auth.ownerEmail, businessAuditQuery.businessKey);
+                managementDataDirectAnswer = managementDataBusinessAuditAnswer(
+                  businessCurrentEntries,
+                  businessHistoryEntries,
+                  businessAuditQuery
+                );
+              } catch {
+                logger.error('management_data.business_audit_failed');
+                return respondJson(req, res, 503, { error:'経営データ全体の整合性を確認できませんでした。時間をおいてお試しください。' });
+              }
+            }
+            const consistencyQuery = restoreQuery || currentStateQuery || businessAuditQuery
               ? null
               : detectManagementDataHistoryConsistencyQuery(message, history);
             if (consistencyQuery) {
@@ -580,7 +597,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'経営数値と変更履歴の整合性を確認できませんでした。時間をおいてお試しください。' });
               }
             }
-            const historyQuery = restoreQuery || currentStateQuery || consistencyQuery ? null : (detectManagementDataHistoryQuery(message)
+            const historyQuery = restoreQuery || currentStateQuery || businessAuditQuery || consistencyQuery ? null : (detectManagementDataHistoryQuery(message)
               || detectManagementDataHistoryFollowUp(message, history));
             if (historyQuery) {
               try {

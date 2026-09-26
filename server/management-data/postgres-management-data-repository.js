@@ -129,6 +129,35 @@ class PostgresManagementDataRepository {
     );
     return result.rows || [];
   }
+  async findBusinessCurrent(ownerEmail, businessKey) {
+    if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
+    if (typeof businessKey !== 'string' || !businessKey.trim()) return [];
+    const result = await this.pool.query(
+      `SELECT id, owner_email, business_key, data_date, metric_type, amount, currency, note, source,
+              confirmed_by_owner, created_at, updated_at
+         FROM management_data
+        WHERE owner_email = $1 AND business_key = $2
+          AND confirmed_by_owner = TRUE
+        ORDER BY data_date ASC, metric_type ASC, updated_at ASC, id ASC`,
+      [ownerEmail.trim(), businessKey.trim()]
+    );
+    return result.rows || [];
+  }
+  async findBusinessHistory(ownerEmail, businessKey) {
+    if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
+    if (typeof businessKey !== 'string' || !businessKey.trim()) return [];
+    const result = await this.pool.query(
+      `SELECT id, management_data_id, owner_email, business_key, data_date, metric_type,
+              previous_amount, new_amount, previous_currency, new_currency,
+              source, change_note, confirmed_by_owner, changed_at
+         FROM management_data_history
+        WHERE owner_email = $1 AND business_key = $2
+          AND confirmed_by_owner = TRUE
+        ORDER BY data_date ASC, metric_type ASC, changed_at ASC, id ASC`,
+      [ownerEmail.trim(), businessKey.trim()]
+    );
+    return result.rows || [];
+  }
   async findRange(ownerEmail, query) {
     if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
     if (!query?.businessKey || !query?.startDate || !query?.endDate) return [];
