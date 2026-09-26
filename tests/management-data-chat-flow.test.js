@@ -148,3 +148,38 @@ test('Phase 6.41 resolves contextual management-history details from persisted c
   assert.match(source, /history = await conversations\.context/);
   assert.match(source, /managementData\.findHistory\(auth\.ownerEmail, historyQuery\)/);
 });
+
+
+test('Phase 6.42 creates a restore candidate from the earliest owner-scoped audit entry without writing immediately', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /detectManagementDataRestoreRequest\(message, history\)/);
+  assert.match(source, /const restoreHistory = await managementData\.findHistory\(auth\.ownerEmail, restoreQuery\)/);
+  assert.match(source, /const initialHistory = restoreHistory\[0\]/);
+  assert.match(source, /operation:'restore'/);
+  assert.match(source, /restoreHistoryEntryId:initialHistory\.id/);
+  assert.match(source, /previousAmount:Number\(currentEntry\.amount\)/);
+  assert.match(source, /現在の登録値はすでに変更履歴上の最初の値です。復元は行っていません。/);
+});
+
+test('Phase 6.42 restore confirmation re-derives the target from history and stale-checks the current row', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /requestedOperation === 'restore'/);
+  assert.match(source, /isInitialManagementDataRestorePhrase\(body\.originalText\)/);
+  assert.match(source, /const restoreHistory = await managementData\.findHistory\(auth\.ownerEmail, restoreQuery\)/);
+  assert.match(source, /String\(initialHistory\.id\) !== expectedHistoryId/);
+  assert.match(source, /String\(existing\.id\) !== expectedEntryId/);
+  assert.match(source, /Number\(existing\.amount\) !== expectedPreviousAmount/);
+  assert.match(source, /Number\(body\.amount\) !== targetAmount/);
+  assert.match(source, /source:'owner confirmed history restore'/);
+  assert.match(source, /restored:true/);
+});
+
+test('Phase 6.42 restore is never auto-applied by the chat route', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  const chatStart = source.indexOf("url.pathname === '/api/chat'");
+  const confirmStart = source.indexOf("url.pathname === '/api/management-data/confirm'");
+  assert.ok(chatStart > confirmStart);
+  const chatSource = source.slice(chatStart);
+  assert.doesNotMatch(chatSource, /managementData\.update\(auth\.ownerEmail/);
+  assert.match(chatSource, /managementDataCandidates/);
+});
