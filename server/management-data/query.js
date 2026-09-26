@@ -159,6 +159,15 @@ function parseBusinessAndMonthRange(text) {
   return { businessKey, startDate:first.startDate, endDate:first.endDate };
 }
 
+function detectManagementAnalysisFocus(text) {
+  const value = String(text || '');
+  if (/収益性|採算|粗利|利益|営業利益|経費|費用/.test(value)) return 'profit';
+  if (/来客数|客数|来店客数|客単価|平均客単価/.test(value)) return 'traffic';
+  if (/現金残高|資金|キャッシュ/.test(value)) return 'cash';
+  if (/売上/.test(value)) return 'sales';
+  return null;
+}
+
 function detectManagementDataQuery(message) {
   const text = String(message || '').trim();
   if (!text) return null;
@@ -170,7 +179,10 @@ function detectManagementDataQuery(message) {
     const start = new Date(`${startDate}T00:00:00.000Z`);
     const end = new Date(`${endDate}T00:00:00.000Z`);
     const days = Math.floor((end - start) / 86400000) + 1;
-    if (days >= 1 && days <= 31) return { businessKey, metricType:'period_analysis', startDate, endDate };
+    if (days >= 1 && days <= 31) {
+      const analysisFocus = detectManagementAnalysisFocus(text);
+      return { businessKey, metricType:'period_analysis', startDate, endDate, ...(analysisFocus ? { analysisFocus } : {}) };
+    }
     return null;
   }
   const comparisonRequested = /比較|比べ|違い|差(?:は|を|が)?/.test(text);
@@ -194,7 +206,8 @@ function detectManagementDataQuery(message) {
     } : null;
     const monthRequested = /月次|月間|経営状況|経営数値|売上|来客数|客単価|経費|利益|分析|まとめ|推移|傾向/.test(text);
     if (monthRange && monthRequested) {
-      return { businessKey:monthRange.businessKey, metricType:'period_analysis', startDate:monthRange.startDate, endDate:monthRange.endDate };
+      const analysisFocus = detectManagementAnalysisFocus(text);
+      return { businessKey:monthRange.businessKey, metricType:'period_analysis', startDate:monthRange.startDate, endDate:monthRange.endDate, ...(analysisFocus ? { analysisFocus } : {}) };
     }
     const yearCompare = parseBusinessAndYears(text);
     if (comparisonRequested && yearCompare.years.length >= 2) {
@@ -231,15 +244,7 @@ function detectManagementDataQuery(message) {
                 : null;
   if (!businessKey || !metricType || !dataDate) return null;
   if (metricType === 'daily_analysis' && !summaryRequested) {
-    const analysisFocus = /収益性|採算|粗利|利益|営業利益|経費|費用/.test(text)
-      ? 'profit'
-      : /来客数|客数|来店客数|客単価|平均客単価/.test(text)
-        ? 'traffic'
-        : /現金残高|資金|キャッシュ/.test(text)
-          ? 'cash'
-          : /売上/.test(text)
-            ? 'sales'
-            : null;
+    const analysisFocus = detectManagementAnalysisFocus(text);
     return { businessKey, metricType, dataDate, ...(analysisFocus ? { analysisFocus } : {}) };
   }
   return { businessKey, metricType, dataDate };
@@ -708,4 +713,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
