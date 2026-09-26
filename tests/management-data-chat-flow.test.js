@@ -31,3 +31,12 @@ test('Phase 6.31 routes focused period analysis through focused period context',
   const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
   assert.match(source, /managementQuery\.metricType === 'period_analysis'[\s\S]*managementQuery\.analysisFocus[\s\S]*managementDataFocusedPeriodContext/);
 });
+
+
+test('Phase 6.32 routes focused monthly and annual analysis through focused grouped contexts', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /monthly_period_analysis[\s\S]*managementDataFocusedMultiMonthContext/);
+  assert.match(source, /monthly_comparison[\s\S]*managementDataFocusedMultiMonthContext/);
+  assert.match(source, /annual_period_analysis[\s\S]*managementDataFocusedMultiYearContext/);
+  assert.match(source, /annual_comparison[\s\S]*managementDataFocusedMultiYearContext/);
+});
