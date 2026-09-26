@@ -71,17 +71,29 @@ function isSameManagementDataValue(existing, candidate) {
 }
 
 function managementDataCandidateAcknowledgement(candidates, duplicateCount = 0) {
-  const count = Array.isArray(candidates) ? candidates.length : 0;
+  const items = Array.isArray(candidates) ? candidates : [];
   const duplicates = Number.isInteger(duplicateCount) && duplicateCount > 0 ? duplicateCount : 0;
   const duplicateText = duplicates
     ? (duplicates === 1
       ? '同じ経営数値1件はすでに登録済みのため、重複保存候補にはしません。'
       : `同じ経営数値${duplicates}件はすでに登録済みのため、重複保存候補にはしません。`)
     : '';
-  if (!count) return duplicateText;
-  const pendingText = count === 1
-    ? '経営数値の保存候補を作成しました。まだ保存していません。下の内容を確認し、「確認して保存」を押した場合だけ保存します。'
-    : `経営数値の保存候補を${count}件作成しました。まだ保存していません。下の内容を確認し、それぞれ「確認して保存」を押した場合だけ保存します。`;
+  if (!items.length) return duplicateText;
+
+  const updateCount = items.filter(item => item?.operation === 'update').length;
+  const createCount = items.length - updateCount;
+  let pendingText = '';
+  if (updateCount && !createCount) {
+    pendingText = updateCount === 1
+      ? '既存の経営数値と異なる値が入力されたため、更新候補を作成しました。まだ更新していません。現在値と新しい値を確認し、「確認して更新」を押した場合だけ更新します。'
+      : `既存の経営数値と異なる値が入力されたため、更新候補を${updateCount}件作成しました。まだ更新していません。それぞれ現在値と新しい値を確認し、「確認して更新」を押した場合だけ更新します。`;
+  } else if (createCount && !updateCount) {
+    pendingText = createCount === 1
+      ? '経営数値の保存候補を作成しました。まだ保存していません。下の内容を確認し、「確認して保存」を押した場合だけ保存します。'
+      : `経営数値の保存候補を${createCount}件作成しました。まだ保存していません。下の内容を確認し、それぞれ「確認して保存」を押した場合だけ保存します。`;
+  } else {
+    pendingText = `経営数値の新規保存候補を${createCount}件、更新候補を${updateCount}件作成しました。まだ保存・更新していません。内容を確認し、それぞれの確認ボタンを押した場合だけ反映します。`;
+  }
   return [duplicateText, pendingText].filter(Boolean).join(' ');
 }
 
