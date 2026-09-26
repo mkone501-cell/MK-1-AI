@@ -5,7 +5,8 @@ const path = require('node:path');
 
 const migrations = [
   fs.readFileSync(path.join(__dirname, '../../db/migrations/005_create_management_data.sql'), 'utf8'),
-  fs.readFileSync(path.join(__dirname, '../../db/migrations/006_create_management_data_history.sql'), 'utf8')
+  fs.readFileSync(path.join(__dirname, '../../db/migrations/006_create_management_data_history.sql'), 'utf8'),
+  fs.readFileSync(path.join(__dirname, '../../db/migrations/007_add_management_data_superseded.sql'), 'utf8')
 ];
 
 async function migrateManagementData(repository) {
