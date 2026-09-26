@@ -166,7 +166,7 @@ test('Phase 6.40 reports confirmed actor, recorded update context and original i
   });
 
   assert.match(answer, /変更者：オーナー本人（確認操作済み）/);
-  assert.match(answer, /変更理由：オーナーが会話内容を確認し、訂正として更新しました。/);
+  assert.match(answer, /変更理由：記録上は「オーナー確認による訂正」です。具体的な訂正理由は記録されていません。/);
   assert.match(answer, /確認時の入力文：「2026年8月15日のNORTH STAR BEANSの売上は126000円です」/);
   assert.match(answer, /確認時の入力文：「2026年8月15日のNORTH STAR BEANSの売上は125000円です」/);
   assert.match(answer, /現在の登録値は125,000円/);
