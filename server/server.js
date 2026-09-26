@@ -419,7 +419,9 @@ function createApplication(options = {}) {
                   selectedKnowledge = scoped.knowledge;
                 } else if (managementQuery.metricType === 'period_analysis') {
                   const entries = await managementData.findRange(auth.ownerEmail, managementQuery);
-                  const context = managementDataPeriodContext(entries, managementQuery.startDate, managementQuery.endDate);
+                  const context = managementQuery.analysisFocus
+                    ? managementDataFocusedPeriodContext(entries, managementQuery.startDate, managementQuery.endDate, managementQuery.analysisFocus)
+                    : managementDataPeriodContext(entries, managementQuery.startDate, managementQuery.endDate);
                   const scoped = scopeManagementAnalysisInputs({ query:managementQuery, history:replyHistory, knowledge:selectedKnowledge, context });
                   replyHistory = scoped.history;
                   selectedKnowledge = scoped.knowledge;
