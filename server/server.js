@@ -327,10 +327,10 @@ function createApplication(options = {}) {
           if (requestedOperation !== 'update') {
             return respondJson(req, res, 409, { error:'同じ日・同じ項目に別の登録値があります。会話から更新候補を作り直して確認してください。', code:'MANAGEMENT_DATA_UPDATE_REVIEW_REQUIRED' });
           }
-          const expectedEntryId = typeof body.existingEntryId === 'string' ? body.existingEntryId : '';
+          const expectedEntryId = String(body.existingEntryId ?? '').trim();
           const expectedPreviousAmount = Number(body.previousAmount);
           const expectedPreviousCurrency = typeof body.previousCurrency === 'string' ? body.previousCurrency.trim().toUpperCase() : '';
-          if (!UUID.test(expectedEntryId) || existing.id !== expectedEntryId ||
+          if (!/^\d+$/.test(expectedEntryId) || String(existing.id) !== expectedEntryId ||
               !Number.isFinite(expectedPreviousAmount) || Number(existing.amount) !== expectedPreviousAmount ||
               String(existing.currency || '').trim().toUpperCase() !== expectedPreviousCurrency) {
             return respondJson(req, res, 409, { error:'既存の経営数値が候補作成後に変更されています。最新の値を確認してから更新してください。', code:'MANAGEMENT_DATA_UPDATE_STALE' });
