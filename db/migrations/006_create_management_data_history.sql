@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS management_data_history (
   id BIGSERIAL PRIMARY KEY,
-  management_data_id BIGINT NOT NULL REFERENCES management_data(id) ON DELETE CASCADE,
+  management_data_id BIGINT NOT NULL REFERENCES management_data(id),
   owner_email TEXT NOT NULL,
   business_key TEXT NOT NULL,
   data_date DATE NOT NULL,
