@@ -35,7 +35,7 @@ test('Phase 6.37 updates the confirmed existing management-data row in place', a
 
   assert.equal(result.amount, '126000.0000');
   assert.match(captured.sql, /UPDATE management_data/);
-  assert.doesNotMatch(captured.sql, /INSERT INTO management_data/);
+  assert.doesNotMatch(captured.sql, /INSERT INTO management_data\s*\(/);
   assert.match(captured.sql, /WHERE id = \$1 AND owner_email = \$2/);
   assert.equal(captured.params[0], '42');
   assert.equal(captured.params[1], 'owner@example.com');
@@ -95,7 +95,8 @@ test('Phase 6.38 migration creates indexed audit history without changing the cu
   const path = require('node:path');
   const sql = fs.readFileSync(path.join(__dirname, '../db/migrations/006_create_management_data_history.sql'), 'utf8');
   assert.match(sql, /CREATE TABLE IF NOT EXISTS management_data_history/);
-  assert.match(sql, /management_data_id BIGINT NOT NULL REFERENCES management_data\(id\) ON DELETE CASCADE/);
+  assert.match(sql, /management_data_id BIGINT NOT NULL REFERENCES management_data\(id\)/);
+  assert.doesNotMatch(sql, /ON DELETE CASCADE/);
   assert.match(sql, /previous_amount NUMERIC\(18,2\) NOT NULL/);
   assert.match(sql, /new_amount NUMERIC\(18,2\) NOT NULL/);
   assert.match(sql, /changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW\(\)/);
