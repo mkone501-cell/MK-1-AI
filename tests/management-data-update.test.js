@@ -10,7 +10,7 @@ test('Phase 6.37 updates the confirmed existing management-data row in place', a
     async query(sql, params) {
       captured = { sql, params };
       return { rows:[{
-        id:'11111111-1111-4111-8111-111111111111',
+        id:'42',
         owner_email:'owner@example.com',
         business_key:'north-star-beans',
         data_date:'2026-08-15',
@@ -22,7 +22,7 @@ test('Phase 6.37 updates the confirmed existing management-data row in place', a
     }
   };
   const repository = new PostgresManagementDataRepository(pool);
-  const result = await repository.update('owner@example.com', '11111111-1111-4111-8111-111111111111', {
+  const result = await repository.update('owner@example.com', '42', {
     businessKey:'north-star-beans',
     dataDate:'2026-08-15',
     metricType:'revenue',
@@ -35,9 +35,9 @@ test('Phase 6.37 updates the confirmed existing management-data row in place', a
 
   assert.equal(result.amount, '126000.0000');
   assert.match(captured.sql, /UPDATE management_data/);
-  assert.doesNotMatch(captured.sql, /INSERT INTO management_data/);
+  assert.doesNotMatch(captured.sql, /INSERT INTO management_data\s*\(/);
   assert.match(captured.sql, /WHERE id = \$1 AND owner_email = \$2/);
-  assert.equal(captured.params[0], '11111111-1111-4111-8111-111111111111');
+  assert.equal(captured.params[0], '42');
   assert.equal(captured.params[1], 'owner@example.com');
   assert.equal(captured.params[5], 126000);
 });
@@ -47,7 +47,7 @@ test('Phase 6.37 refuses an unconfirmed in-place update payload', async () => {
   const repository = new PostgresManagementDataRepository({
     async query() { called = true; return { rows:[] }; }
   });
-  const result = await repository.update('owner@example.com', '11111111-1111-4111-8111-111111111111', {
+  const result = await repository.update('owner@example.com', '42', {
     businessKey:'north-star-beans',
     dataDate:'2026-08-15',
     metricType:'revenue',
@@ -58,4 +58,47 @@ test('Phase 6.37 refuses an unconfirmed in-place update payload', async () => {
   });
   assert.equal(result, null);
   assert.equal(called, false);
+});
+
+
+test('Phase 6.38 records the previous and new management values in the same atomic SQL statement', async () => {
+  let captured = null;
+  const repository = new PostgresManagementDataRepository({
+    async query(sql, params) {
+      captured = { sql, params };
+      return { rows:[{ id:'42', amount:'126000.00', currency:'JPY' }] };
+    }
+  });
+  await repository.update('owner@example.com', '42', {
+    businessKey:'north-star-beans',
+    dataDate:'2026-08-15',
+    metricType:'revenue',
+    amount:126000,
+    currency:'JPY',
+    source:'owner confirmed correction',
+    note:'2026年8月15日のNORTH STAR BEANSの売上は126000円です',
+    confirmed:true
+  });
+
+  assert.match(captured.sql, /WITH previous AS/);
+  assert.match(captured.sql, /FOR UPDATE/);
+  assert.match(captured.sql, /INSERT INTO management_data_history/);
+  assert.match(captured.sql, /previous_amount, new_amount/);
+  assert.match(captured.sql, /previous_currency, new_currency/);
+  assert.match(captured.sql, /confirmed_by_owner, changed_at/);
+  assert.match(captured.sql, /previous\.previous_amount IS DISTINCT FROM updated\.amount/);
+  assert.equal(captured.params[5], 126000);
+});
+
+test('Phase 6.38 migration creates indexed audit history without changing the current management_data row model', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const sql = fs.readFileSync(path.join(__dirname, '../db/migrations/006_create_management_data_history.sql'), 'utf8');
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS management_data_history/);
+  assert.match(sql, /management_data_id BIGINT NOT NULL REFERENCES management_data\(id\)/);
+  assert.doesNotMatch(sql, /ON DELETE CASCADE/);
+  assert.match(sql, /previous_amount NUMERIC\(18,2\) NOT NULL/);
+  assert.match(sql, /new_amount NUMERIC\(18,2\) NOT NULL/);
+  assert.match(sql, /changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW\(\)/);
+  assert.match(sql, /management_data_history_entry_changed_idx/);
 });

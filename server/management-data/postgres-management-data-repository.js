@@ -41,13 +41,41 @@ class PostgresManagementDataRepository {
     if (typeof id !== 'string' || !id.trim()) return null;
     const value = normalizeEntry(input); if (!value) return null;
     const result = await this.pool.query(
-      `UPDATE management_data
-          SET amount = $6, currency = $7, note = $8, source = $9, updated_at = NOW()
-        WHERE id = $1 AND owner_email = $2 AND business_key = $3
-          AND data_date = $4::date AND metric_type = $5
-          AND confirmed_by_owner = TRUE
-        RETURNING id, owner_email, business_key, data_date, metric_type, amount, currency, note, source,
-                  confirmed_by_owner, created_at, updated_at`,
+      `WITH previous AS (
+         SELECT id, owner_email, business_key, data_date, metric_type,
+                amount AS previous_amount, currency AS previous_currency
+           FROM management_data
+          WHERE id = $1 AND owner_email = $2 AND business_key = $3
+            AND data_date = $4::date AND metric_type = $5
+            AND confirmed_by_owner = TRUE
+          FOR UPDATE
+       ),
+       updated AS (
+         UPDATE management_data AS current
+            SET amount = $6, currency = $7, note = $8, source = $9, updated_at = NOW()
+           FROM previous
+          WHERE current.id = previous.id
+          RETURNING current.id, current.owner_email, current.business_key, current.data_date,
+                    current.metric_type, current.amount, current.currency, current.note, current.source,
+                    current.confirmed_by_owner, current.created_at, current.updated_at
+       ),
+       audit AS (
+         INSERT INTO management_data_history
+           (management_data_id, owner_email, business_key, data_date, metric_type,
+            previous_amount, new_amount, previous_currency, new_currency,
+            source, change_note, confirmed_by_owner, changed_at)
+         SELECT previous.id, previous.owner_email, previous.business_key, previous.data_date, previous.metric_type,
+                previous.previous_amount, updated.amount, previous.previous_currency, updated.currency,
+                $9, $8, TRUE, updated.updated_at
+           FROM previous
+           JOIN updated ON updated.id = previous.id
+          WHERE previous.previous_amount IS DISTINCT FROM updated.amount
+             OR previous.previous_currency IS DISTINCT FROM updated.currency
+         RETURNING id
+       )
+       SELECT id, owner_email, business_key, data_date, metric_type, amount, currency, note, source,
+              confirmed_by_owner, created_at, updated_at
+         FROM updated`,
       [id.trim(), ownerEmail.trim(), value.businessKey, value.dataDate, value.metricType, value.amount, value.currency, value.note, value.source]
     );
     return result.rows[0] || null;
