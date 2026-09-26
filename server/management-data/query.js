@@ -618,6 +618,74 @@ function managementDataMissingPeriodNextInputs(missingLabels, focus, periodLabel
   );
 }
 
+function managementDataFocusedGroupComparisonMetrics(groups, focus) {
+  const source = Array.isArray(groups) ? groups.slice(0, 2) : [];
+  if (source.length < 2) return [];
+  const metricMap = {
+    sales:['revenue'],
+    traffic:['revenue','customers','average_spend'],
+    profit:['revenue','expense','profit'],
+    cash:['cash_balance']
+  };
+  const names = { revenue:'売上', expense:'経費', profit:'利益', customers:'来客数', average_spend:'客単価', cash_balance:'現金残高' };
+  const additive = new Set(['revenue','expense','profit','customers']);
+  const metrics = metricMap[focus] || [];
+  const format = (value, currency, signed = false) => {
+    const rounded = Number.isInteger(value) ? value : Number(value.toFixed(2));
+    const sign = signed && rounded > 0 ? '+' : '';
+    const unit = currency === 'JPY' ? '円' : currency === 'COUNT' ? '人' : currency ? ` ${currency}` : '';
+    return `${sign}${rounded.toLocaleString('ja-JP')}${unit}`;
+  };
+  const rateText = (before, after) => {
+    if (before === 0) return '増減率は基準値0のため算出不可';
+    const rate = (after - before) / before * 100;
+    return `増減率${rate > 0 ? '+' : ''}${Number(rate.toFixed(2)).toLocaleString('ja-JP')}%`;
+  };
+  const rowsFor = (group, metricType) =>
+    (group?.entries || []).filter(entry => entry?.metric_type === metricType && Number.isFinite(Number(entry?.amount)));
+
+  const [left, right] = source;
+  const leftLabel = left?.label || `${left?.startDate}〜${left?.endDate}`;
+  const rightLabel = right?.label || `${right?.startDate}〜${right?.endDate}`;
+  const lines = [];
+  for (const metricType of metrics) {
+    const leftRows = rowsFor(left, metricType);
+    const rightRows = rowsFor(right, metricType);
+    if (!leftRows.length || !rightRows.length) continue;
+    const leftCurrency = leftRows[0]?.currency || '';
+    const rightCurrency = rightRows[0]?.currency || '';
+    if (leftCurrency !== rightCurrency) continue;
+    const name = names[metricType] || metricType;
+
+    if (metricType === 'cash_balance') {
+      const leftLatest = [...leftRows].sort((a,b) => String(a.data_date).localeCompare(String(b.data_date))).at(-1);
+      const rightLatest = [...rightRows].sort((a,b) => String(a.data_date).localeCompare(String(b.data_date))).at(-1);
+      const before = Number(leftLatest.amount);
+      const after = Number(rightLatest.amount);
+      lines.push(`${name}: ${leftLabel}の最新登録値${format(before, leftCurrency)} → ${rightLabel}の最新登録値${format(after, rightCurrency)}、差${format(after - before, rightCurrency, true)}、${rateText(before, after)}`);
+      continue;
+    }
+
+    const leftValues = leftRows.map(entry => Number(entry.amount));
+    const rightValues = rightRows.map(entry => Number(entry.amount));
+    const leftAverage = leftValues.reduce((sum, value) => sum + value, 0) / leftValues.length;
+    const rightAverage = rightValues.reduce((sum, value) => sum + value, 0) / rightValues.length;
+
+    if (additive.has(metricType) && leftValues.length === rightValues.length) {
+      const leftTotal = leftValues.reduce((sum, value) => sum + value, 0);
+      const rightTotal = rightValues.reduce((sum, value) => sum + value, 0);
+      lines.push(`${name}: 登録日数が同じ${leftValues.length}日のため登録済み日合計を比較。 ${leftLabel} ${format(leftTotal, leftCurrency)} → ${rightLabel} ${format(rightTotal, rightCurrency)}、差${format(rightTotal - leftTotal, rightCurrency, true)}、${rateText(leftTotal, rightTotal)}`);
+      continue;
+    }
+
+    const reason = additive.has(metricType) && leftValues.length !== rightValues.length
+      ? `登録日数が異なる（${leftLabel} ${leftValues.length}日、${rightLabel} ${rightValues.length}日）ため合計は直接比較せず、`
+      : '';
+    lines.push(`${name}: ${reason}登録日平均を比較。 ${leftLabel} ${format(leftAverage, leftCurrency)} → ${rightLabel} ${format(rightAverage, rightCurrency)}、差${format(rightAverage - leftAverage, rightCurrency, true)}、${rateText(leftAverage, rightAverage)}`);
+  }
+  return lines;
+}
+
 function managementDataFocusedGroupedContext(groups, focus, periodLabel, comparison = false) {
   const safeGroups = Array.isArray(groups) ? groups : [];
   if (!safeGroups.length) return null;
@@ -629,11 +697,16 @@ function managementDataFocusedGroupedContext(groups, focus, periodLabel, compari
   const available = items.filter(item => item.context && !/本人確認済み経営数値はありません/.test(item.context.body));
   const missing = items.filter(item => !item.context || /本人確認済み経営数値はありません/.test(item.context.body)).map(item => item.label);
   const missingInputs = managementDataMissingPeriodNextInputs(missing, focus, periodLabel, comparison);
+  const comparisonMetrics = comparison ? managementDataFocusedGroupComparisonMetrics(safeGroups, focus) : [];
   const unit = periodLabel === 'year' ? '年' : '月';
   const body = [
     `ユーザーは${label}に絞った${unit}ごとの${comparison ? '比較' : '推移分析'}を求めています。頼まれていない別分野へ話を広げないでください。`,
     `未登録日・未登録${unit}は0として扱わないでください。`,
     missing.length ? `データ未登録の${unit}: ${missing.join('、')}` : '',
+    ...(comparisonMetrics.length ? [
+      'サーバー計算済み期間比較（再計算せずこの値を使用）:',
+      ...comparisonMetrics
+    ] : []),
     ...(missingInputs.length ? [
       '次に登録すると分析が広がる項目（サーバー判定）:',
       ...missingInputs,
@@ -772,4 +845,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
