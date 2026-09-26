@@ -171,7 +171,11 @@ function detectManagementAnalysisFocus(text) {
 function detectManagementDataHistoryQuery(message) {
   const text = String(message || '').trim();
   if (!text) return null;
-  const historyRequested = /(?:変更履歴|更新履歴|訂正履歴|修正履歴|何円から何円|いつ[^。！？\n]{0,30}(?:変更|更新|訂正)|(?:変更|更新|訂正)[^。！？\n]{0,30}いつ)/.test(text);
+  const includeActor = /誰が|変更者|更新者|訂正者|修正者|だれが/.test(text);
+  const includeReason = /なぜ|どうして|理由|経緯|原因/.test(text);
+  const includeSourceText = /元の入力|入力文|入力内容|根拠|情報源|ソース|詳しく|詳細/.test(text);
+  const historyRequested = /(?:変更履歴|更新履歴|訂正履歴|修正履歴|何円から何円|いつ[^。！？\n]{0,30}(?:変更|更新|訂正)|(?:変更|更新|訂正)[^。！？\n]{0,30}いつ)/.test(text)
+    || ((includeActor || includeReason || includeSourceText) && /変更|更新|訂正|修正/.test(text));
   if (!historyRequested) return null;
   const { businessKey, dataDate } = parseBusinessAndDate(text);
   const metricType = /客単価|平均客単価/.test(text)
@@ -188,7 +192,7 @@ function detectManagementDataHistoryQuery(message) {
               ? 'revenue'
               : null;
   if (!dataDate || !metricType) return null;
-  return { businessKey, dataDate, metricType };
+  return { businessKey, dataDate, metricType, includeActor, includeReason, includeSourceText };
 }
 
 function formatManagementHistoryValue(amount, currency) {
@@ -215,6 +219,27 @@ function formatManagementHistoryChangedAt(value) {
   return `${part('year')}/${part('month')}/${part('day')} ${part('hour')}:${part('minute')}`;
 }
 
+function managementHistoryActor(row) {
+  if (row?.confirmed_by_owner === true) return 'オーナー本人（確認操作済み）';
+  return '変更者を確認できません';
+}
+
+function managementHistoryReason(row) {
+  const source = String(row?.source || '').trim();
+  if (source === 'owner confirmed correction') {
+    return 'オーナーが会話内容を確認し、訂正として更新しました。';
+  }
+  if (source === 'owner confirmed conversation') {
+    return 'オーナーが会話内容を確認して保存しました。';
+  }
+  return '変更理由は個別には記録されていません。';
+}
+
+function managementHistoryOriginalInput(row) {
+  const note = String(row?.change_note || '').trim();
+  return note || null;
+}
+
 function managementDataHistoryAnswer(entries, currentEntry, query = {}) {
   const rows = (Array.isArray(entries) ? entries : []).filter(Boolean);
   const businessKeys = [...new Set(rows.map(row => String(row.business_key || '').trim()).filter(Boolean))];
@@ -233,11 +258,21 @@ function managementDataHistoryAnswer(entries, currentEntry, query = {}) {
     return `${dateLabel || '指定日'}の${businessName}の${metricName}には、保存されている変更履歴はありません。${currentText}`.trim();
   }
 
+  const includeDetails = Boolean(query.includeActor || query.includeReason || query.includeSourceText);
   const lines = rows.map((row, index) => {
     const before = formatManagementHistoryValue(row.previous_amount, row.previous_currency) || '不明';
     const after = formatManagementHistoryValue(row.new_amount, row.new_currency) || '不明';
     const changedAt = formatManagementHistoryChangedAt(row.changed_at);
-    return `${index + 1}. ${changedAt ? `${changedAt}：` : ''}${before} → ${after}`;
+    const base = `${index + 1}. ${changedAt ? `${changedAt}：` : ''}${before} → ${after}`;
+    if (!includeDetails) return base;
+    const details = [];
+    if (query.includeActor) details.push(`変更者：${managementHistoryActor(row)}`);
+    if (query.includeReason) details.push(`変更理由：${managementHistoryReason(row)}`);
+    if (query.includeSourceText) {
+      const originalInput = managementHistoryOriginalInput(row);
+      details.push(originalInput ? `確認時の入力文：「${originalInput}」` : '確認時の入力文：記録されていません');
+    }
+    return `${base}\n   ${details.join('\n   ')}`;
   });
   const currentText = currentValue
     ? `\n現在の登録値は${currentValue}です。`
