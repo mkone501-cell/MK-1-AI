@@ -18,7 +18,7 @@ const { migrateKnowledge } = require('./knowledge/migrate-knowledge');
 const { validateKnowledge } = require('./knowledge/validation');
 const { knowledgeContext } = require('./knowledge/context');
 const { proposeMemory } = require('./knowledge/update-candidates');
-const { detectManagementDataCandidate, detectManagementDataCandidates } = require('./management-data/candidates');
+const { detectManagementDataCandidate, detectManagementDataCandidates, managementDataCandidateAcknowledgement } = require('./management-data/candidates');
 const { PostgresManagementDataRepository } = require('./management-data/postgres-management-data-repository');
 const { migrateManagementData } = require('./management-data/migrate-management-data');
 const { detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
@@ -467,7 +467,10 @@ function createApplication(options = {}) {
               }
             }
           }
-          const result = await mirai.reply({ message, history:replyHistory, knowledge:selectedKnowledge });
+          let result = await mirai.reply({ message, history:replyHistory, knowledge:selectedKnowledge });
+          if (managementDataCandidates.length) {
+            result = { ...result, answer:managementDataCandidateAcknowledgement(managementDataCandidates) };
+          }
           if (typeof result.answer !== 'string' || containsSecret(result.answer, config, req)) {
             logger.error('conversation.answer_rejected');
             return respondJson(req, res, 502, { error:'ミライの回答を安全に保存できませんでした。' });
