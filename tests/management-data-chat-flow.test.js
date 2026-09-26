@@ -193,7 +193,7 @@ test('Phase 6.43 routes current-value and last-change questions to deterministic
   assert.match(source, /managementData\.findHistory\(auth\.ownerEmail, currentStateQuery\)/);
   assert.match(source, /managementData\.findExact\(auth\.ownerEmail, resolvedStateQuery\)/);
   assert.match(source, /managementDataCurrentStateAnswer\(currentStateEntry, stateHistoryEntries, resolvedStateQuery\)/);
-  assert.match(source, /restoreQuery \|\| currentStateQuery \? null/);
+  assert.match(source, /restoreQuery \|\| currentStateQuery \|\| consistencyQuery \? null/);
 });
 
 test('Phase 6.43 keeps current-state lookup owner-scoped and read-only', () => {
@@ -205,4 +205,25 @@ test('Phase 6.43 keeps current-state lookup owner-scoped and read-only', () => {
   assert.match(currentStateBlock, /auth\.ownerEmail/);
   assert.doesNotMatch(currentStateBlock, /managementData\.update\(/);
   assert.doesNotMatch(currentStateBlock, /managementData\.create\(/);
+});
+
+
+test('Phase 6.44 routes history-consistency checks through owner-scoped current and audit data', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /detectManagementDataHistoryConsistencyQuery\(message, history\)/);
+  assert.match(source, /managementData\.findHistory\(auth\.ownerEmail, consistencyQuery\)/);
+  assert.match(source, /managementData\.findExact\(auth\.ownerEmail, resolvedConsistencyQuery\)/);
+  assert.match(source, /managementDataHistoryConsistencyAnswer\(consistencyCurrentEntry, consistencyHistoryEntries, resolvedConsistencyQuery\)/);
+});
+
+test('Phase 6.44 consistency route is read-only and never auto-repairs a mismatch', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  const start = source.indexOf('const consistencyQuery =');
+  const end = source.indexOf('const historyQuery =', start);
+  assert.ok(start >= 0 && end > start);
+  const block = source.slice(start, end);
+  assert.match(block, /auth\.ownerEmail/);
+  assert.doesNotMatch(block, /managementData\.update\(/);
+  assert.doesNotMatch(block, /managementData\.create\(/);
+  assert.doesNotMatch(block, /managementData\.delete\(/);
 });
