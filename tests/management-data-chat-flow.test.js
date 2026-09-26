@@ -25,3 +25,9 @@ test('Phase 6.26 keeps daily summary on the concise summary context', () => {
   const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
   assert.match(source, /: managementDataSummaryContext\(entries\)/);
 });
+
+
+test('Phase 6.31 routes focused period analysis through focused period context', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /managementQuery\.metricType === 'period_analysis'[\s\S]*managementQuery\.analysisFocus[\s\S]*managementDataFocusedPeriodContext/);
+});
