@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
+const { detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges } = require('../server/management-data/query');
 const { PostgresManagementDataRepository } = require('../server/management-data/postgres-management-data-repository');
 
 test('Phase 6.7 parses a confirmed management-data fact question', () => {
@@ -896,4 +896,64 @@ test('Phase 6.31 keeps general monthly management analysis unfocused', () => {
     detectManagementDataQuery('2026年9月のNORTH STAR BEANSの経営状況を分析して'),
     { businessKey:'north-star-beans', metricType:'period_analysis', startDate:'2026-09-01', endDate:'2026-09-30' }
   );
+});
+
+
+test('Phase 6.32 attaches sales focus to monthly comparison', () => {
+  assert.deepEqual(
+    detectManagementDataQuery('2026年8月と9月のNORTH STAR BEANSの売上を比較して'),
+    {
+      businessKey:'north-star-beans',
+      metricType:'monthly_comparison',
+      months:[
+        { year:2026, month:8, startDate:'2026-08-01', endDate:'2026-08-31', label:'2026年8月' },
+        { year:2026, month:9, startDate:'2026-09-01', endDate:'2026-09-30', label:'2026年9月' }
+      ],
+      analysisFocus:'sales'
+    }
+  );
+});
+
+test('Phase 6.32 attaches sales focus to multi-month trend analysis', () => {
+  const query = detectManagementDataQuery('2026年7月から9月までのNORTH STAR BEANSの売上推移を分析して');
+  assert.equal(query.metricType, 'monthly_period_analysis');
+  assert.equal(query.analysisFocus, 'sales');
+  assert.equal(query.months.length, 3);
+});
+
+test('Phase 6.32 attaches profit focus to annual comparison', () => {
+  const query = detectManagementDataQuery('2025年と2026年のNORTH STAR BEANSの収益性を比較して');
+  assert.equal(query.metricType, 'annual_comparison');
+  assert.equal(query.analysisFocus, 'profit');
+});
+
+test('Phase 6.32 focused multi-month context omits unrelated metrics', () => {
+  const context = managementDataFocusedMultiMonthContext([
+    {
+      label:'2026年9月', startDate:'2026-09-01', endDate:'2026-09-30',
+      entries:[
+        { business_key:'north-star-beans', data_date:'2026-09-21', metric_type:'revenue', amount:'150000', currency:'JPY' },
+        { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' },
+        { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'customers', amount:'80', currency:'COUNT' }
+      ]
+    }
+  ], 'sales');
+  assert.match(context.body, /売上に絞った月ごとの推移分析/);
+  assert.match(context.body, /150,000円/);
+  assert.match(context.body, /160,000円/);
+  assert.doesNotMatch(context.body, /来客数80人/);
+});
+
+test('Phase 6.32 focused multi-year comparison omits unrelated metrics', () => {
+  const context = managementDataFocusedMultiYearContext([
+    {
+      label:'2026年', startDate:'2026-01-01', endDate:'2026-12-31',
+      entries:[
+        { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue', amount:'160000', currency:'JPY' },
+        { business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'customers', amount:'80', currency:'COUNT' }
+      ]
+    }
+  ], 'sales', true);
+  assert.match(context.body, /売上に絞った年ごとの比較/);
+  assert.doesNotMatch(context.body, /来客数80人/);
 });
