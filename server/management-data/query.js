@@ -195,6 +195,37 @@ function detectManagementDataHistoryQuery(message) {
   return { businessKey, dataDate, metricType, includeActor, includeReason, includeSourceText };
 }
 
+function detectManagementDataHistoryFollowUp(message, history = []) {
+  const text = String(message || '').trim();
+  if (!text) return null;
+
+  const includeActor = /誰が|変更者|更新者|訂正者|修正者|だれが/.test(text);
+  const includeReason = /なぜ|どうして|理由|経緯|原因/.test(text);
+  const includeSourceText = /元の入力|入力文|入力内容|何と入力|何て入力|なにと入力|なんて入力|実際に[^。！？\n]{0,20}入力|どんな入力|根拠|情報源|ソース/.test(text);
+  const detailRequested = includeActor || includeReason || includeSourceText;
+  if (!detailRequested) return null;
+
+  // Phase 6.41 only resolves clearly contextual follow-ups. It never guesses a date/metric
+  // when the user starts a new, unrelated question.
+  const contextualReference = /その(?:とき|時|変更|更新|訂正|修正|履歴)|この(?:変更|更新|訂正|修正|履歴)|さっき|先ほど|今の|それ|あの(?:変更|更新|訂正|修正)/.test(text);
+  if (!contextualReference) return null;
+
+  const turns = Array.isArray(history) ? history : [];
+  for (let index = turns.length - 1; index >= 0; index--) {
+    const turn = turns[index];
+    if (!turn || turn.role !== 'user') continue;
+    const previous = detectManagementDataHistoryQuery(turn.content);
+    if (!previous) continue;
+    return {
+      ...previous,
+      includeActor,
+      includeReason,
+      includeSourceText
+    };
+  }
+  return null;
+}
+
 function formatManagementHistoryValue(amount, currency) {
   const value = Number(amount);
   if (!Number.isFinite(value)) return null;
@@ -957,4 +988,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataHistoryQuery, managementDataHistoryAnswer, formatManagementHistoryValue, formatManagementHistoryChangedAt, detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, managementDataHistoryAnswer, formatManagementHistoryValue, formatManagementHistoryChangedAt, detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
