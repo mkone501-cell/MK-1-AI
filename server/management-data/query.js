@@ -213,7 +213,22 @@ function detectManagementDataQuery(message) {
   }
   const analysisRequested = /分析|評価|考察|どう(?:だった|でした)|良かった|悪かった/.test(text);
   const summaryRequested = /経営状況|経営数値|日次(?:の)?(?:状況|実績|まとめ)|まとめて/.test(text);
-  const metricType = analysisRequested && summaryRequested ? 'daily_analysis' : summaryRequested ? 'daily_summary' : /来客数|客数|来店客数/.test(text) ? 'customers' : /客単価|平均客単価/.test(text) ? 'average_spend' : /経費|費用/.test(text) ? 'expense' : /利益|営業利益/.test(text) ? 'profit' : /売上/.test(text) ? 'revenue' : null;
+  const focusedMetricRequested = /売上|来客数|客数|来店客数|客単価|平均客単価|経費|費用|利益|営業利益|現金残高|資金|キャッシュ/.test(text);
+  const metricType = analysisRequested && (summaryRequested || focusedMetricRequested)
+    ? 'daily_analysis'
+    : summaryRequested
+      ? 'daily_summary'
+      : /来客数|客数|来店客数/.test(text)
+        ? 'customers'
+        : /客単価|平均客単価/.test(text)
+          ? 'average_spend'
+          : /経費|費用/.test(text)
+            ? 'expense'
+            : /利益|営業利益/.test(text)
+              ? 'profit'
+              : /売上/.test(text)
+                ? 'revenue'
+                : null;
   if (!businessKey || !metricType || !dataDate) return null;
   return { businessKey, metricType, dataDate };
 }
