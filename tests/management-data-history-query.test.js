@@ -830,6 +830,7 @@ test('Phase 6.47 history question is not mistaken for a new duplicate cleanup re
     detectManagementDataDuplicateResolutionHistoryQuery(text, []),
     { businessKey:'north-star-beans', dataDate:null, metricType:null }
   );
+  assert.equal(detectManagementDataDuplicateResolutionRequest(text, []), null);
 });
 
 test('Phase 6.47 formats who, when, kept IDs, excluded IDs and row snapshots', () => {
