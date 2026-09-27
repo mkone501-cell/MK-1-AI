@@ -649,7 +649,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'管理IDの変更履歴を確認できませんでした。時間をおいてお試しください。' });
               }
             }
-            const auditSummaryQuery = idHistoryQuery ? null : detectManagementDataAuditSummaryQuery(message, history);
+            const auditSummaryQuery = historyPointRestoreQuery || idHistoryQuery ? null : detectManagementDataAuditSummaryQuery(message, history);
             if (auditSummaryQuery) {
               managementDataCandidates = [];
               managementDataCleanupCandidates = [];
@@ -662,7 +662,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'経営データの監査サマリーを確認できませんでした。時間をおいてお試しください。' });
               }
             }
-            const auditLogQuery = idHistoryQuery || auditSummaryQuery ? null : detectManagementDataAuditLogQuery(message, history);
+            const auditLogQuery = historyPointRestoreQuery || idHistoryQuery || auditSummaryQuery ? null : detectManagementDataAuditLogQuery(message, history);
             if (auditLogQuery) {
               managementDataCandidates = [];
               managementDataCleanupCandidates = [];
@@ -675,7 +675,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'経営データの監査ログを確認できませんでした。時間をおいてお試しください。' });
               }
             }
-            const duplicateResolutionHistoryQuery = idHistoryQuery || auditSummaryQuery || auditLogQuery
+            const duplicateResolutionHistoryQuery = historyPointRestoreQuery || idHistoryQuery || auditSummaryQuery || auditLogQuery
               ? null
               : detectManagementDataDuplicateResolutionHistoryQuery(message, history);
             if (duplicateResolutionHistoryQuery) {
@@ -693,7 +693,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'重複整理履歴を確認できませんでした。時間をおいてお試しください。' });
               }
             }
-            const duplicateResolutionQuery = idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery
+            const duplicateResolutionQuery = historyPointRestoreQuery || idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery
               ? null
               : detectManagementDataDuplicateResolutionRequest(message, history);
             if (duplicateResolutionQuery) {
@@ -769,7 +769,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'変更履歴から復元候補を作成できませんでした。時間をおいてお試しください。' });
               }
             }
-            const currentStateQuery = idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery || duplicateResolutionQuery || restoreQuery ? null : detectManagementDataCurrentStateQuery(message, history);
+            const currentStateQuery = historyPointRestoreQuery || idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery || duplicateResolutionQuery || restoreQuery ? null : detectManagementDataCurrentStateQuery(message, history);
             if (currentStateQuery) {
               try {
                 const stateHistoryEntries = await managementData.findHistory(auth.ownerEmail, currentStateQuery);
@@ -792,7 +792,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'経営数値の現在値・変更日時を確認できませんでした。時間をおいてお試しください。' });
               }
             }
-            const businessAuditQuery = idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery || duplicateResolutionQuery || restoreQuery || currentStateQuery
+            const businessAuditQuery = historyPointRestoreQuery || idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery || duplicateResolutionQuery || restoreQuery || currentStateQuery
               ? null
               : detectManagementDataBusinessAuditQuery(message, history);
             if (businessAuditQuery) {
@@ -809,7 +809,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'経営データ全体の整合性を確認できませんでした。時間をおいてお試しください。' });
               }
             }
-            const consistencyQuery = idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery || duplicateResolutionQuery || restoreQuery || currentStateQuery || businessAuditQuery
+            const consistencyQuery = historyPointRestoreQuery || idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery || duplicateResolutionQuery || restoreQuery || currentStateQuery || businessAuditQuery
               ? null
               : detectManagementDataHistoryConsistencyQuery(message, history);
             if (consistencyQuery) {
@@ -834,7 +834,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'経営数値と変更履歴の整合性を確認できませんでした。時間をおいてお試しください。' });
               }
             }
-            const historyQuery = idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery || duplicateResolutionQuery || restoreQuery || currentStateQuery || businessAuditQuery || consistencyQuery ? null : (detectManagementDataHistoryQuery(message)
+            const historyQuery = historyPointRestoreQuery || idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery || duplicateResolutionQuery || restoreQuery || currentStateQuery || businessAuditQuery || consistencyQuery ? null : (detectManagementDataHistoryQuery(message)
               || detectManagementDataHistoryFollowUp(message, history));
             if (historyQuery) {
               try {
