@@ -37,7 +37,7 @@ test('Phase 6.54 carries one immediately preceding management ID only for a numb
 test('Phase 6.54 does not guess a history target without management ID or safe context', () => {
   assert.deepEqual(
     detectHistoryPointRestoreRequest('3番目に戻して', []),
-    { managementDataId:null, selector:null, error:'managementDataIdRequired' }
+    { managementDataId:null, selector:{ type:'index', index:3 }, error:'managementDataIdRequired' }
   );
 });
 
