@@ -14,6 +14,8 @@ const {
   managementDataDuplicateResolutionAnswer,
   detectManagementDataDuplicateResolutionHistoryQuery,
   managementDataDuplicateResolutionHistoryAnswer,
+  detectManagementDataAuditLogQuery,
+  managementDataAuditLogAnswer,
   detectManagementDataBusinessAuditQuery,
   managementDataBusinessAuditAnswer,
   detectManagementDataHistoryConsistencyQuery,
@@ -873,4 +875,82 @@ test('Phase 6.47 formats who, when, kept IDs, excluded IDs and row snapshots', (
 test('Phase 6.47 says clearly when no duplicate-resolution history exists', () => {
   const answer = managementDataDuplicateResolutionHistoryAnswer([], { businessKey:'north-star-beans' });
   assert.match(answer, /条件に一致する重複整理履歴はありません/);
+});
+
+
+test('Phase 6.48 detects an explicit comprehensive management audit-log question', () => {
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('NORTH STAR BEANSの経営データ総合監査ログを教えて', []),
+    { businessKey:'north-star-beans', dataDate:null, metricType:null }
+  );
+});
+
+test('Phase 6.48 can filter the comprehensive audit log by business date and metric', () => {
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('2026年9月22日のNORTH STAR BEANSの売上の監査ログを教えて', []),
+    { businessKey:'north-star-beans', dataDate:'2026-09-22', metricType:'revenue' }
+  );
+});
+
+test('Phase 6.48 inherits only a recent explicit business for an audit-log follow-up', () => {
+  const history = [
+    { role:'user', content:'NORTH STAR BEANSの重複整理履歴を教えて' },
+    { role:'assistant', content:'重複整理履歴は2件です。' }
+  ];
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('その経営データの監査ログも教えて', history),
+    { businessKey:'north-star-beans', dataDate:null, metricType:null }
+  );
+});
+
+test('Phase 6.48 does not hijack a business consistency audit or Phase 6.47 duplicate history', () => {
+  assert.equal(
+    detectManagementDataAuditLogQuery('NORTH STAR BEANSの経営データ全体に不整合がないか確認して', []),
+    null
+  );
+  assert.equal(
+    detectManagementDataAuditLogQuery('NORTH STAR BEANSの重複整理履歴を教えて', []),
+    null
+  );
+});
+
+test('Phase 6.48 formats registration, change and duplicate cleanup in one timeline', () => {
+  const answer = managementDataAuditLogAnswer([
+    {
+      event_type:'duplicate_resolution', event_id:'2', management_data_id:'7',
+      business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue',
+      kept_management_data_id:'7', superseded_management_data_ids:[4],
+      original_rows:[
+        { id:'4', amount:160000, currency:'JPY' },
+        { id:'7', amount:160000, currency:'JPY' }
+      ],
+      confirmed_by_owner:true, event_at:'2026-09-27T04:18:00.000Z'
+    },
+    {
+      event_type:'change', event_id:'1', management_data_id:'10',
+      business_key:'north-star-beans', data_date:'2026-08-15', metric_type:'revenue',
+      previous_amount:125000, new_amount:126000,
+      previous_currency:'JPY', new_currency:'JPY',
+      action_note:'オーナー確認による訂正',
+      confirmed_by_owner:true, event_at:'2026-09-26T12:51:00.000Z'
+    },
+    {
+      event_type:'registration', event_id:'4', management_data_id:'4',
+      business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue',
+      amount:160000, currency:'JPY', confirmed_by_owner:true,
+      superseded_by_management_data_id:'7', event_at:'2026-09-22T13:53:37.000Z'
+    }
+  ], { businessKey:'north-star-beans' });
+
+  assert.match(answer, /総合監査ログは3件です（登録1件・変更1件・重複整理1件）/);
+  assert.match(answer, /管理ID 7を残し、管理ID 4を重複扱い/);
+  assert.match(answer, /125,000円から126,000円へ変更/);
+  assert.match(answer, /管理ID 4/);
+  assert.match(answer, /後に管理ID 7へ重複整理/);
+  assert.match(answer, /本人確認済み/);
+});
+
+test('Phase 6.48 says clearly when the comprehensive audit log is empty', () => {
+  const answer = managementDataAuditLogAnswer([], { businessKey:'north-star-beans' });
+  assert.match(answer, /条件に一致する経営データの監査ログはありません/);
 });
