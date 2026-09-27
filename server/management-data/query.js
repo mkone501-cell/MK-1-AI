@@ -536,6 +536,111 @@ function managementDataDuplicateResolutionHistoryAnswer(entries, query = {}) {
   return lines.join('\n');
 }
 
+function detectManagementDataAuditLogQuery(message, history = []) {
+  const text = String(message || '').trim();
+  if (!text) return null;
+
+  const explicitAuditLog = /(?:総合)?監査ログ/.test(text)
+    || /経営(?:データ|数値)[^。！？\n]{0,30}(?:操作履歴|監査履歴)/.test(text)
+    || /(?:登録|変更|更新|訂正|修正|復元)[^。！？\n]{0,30}(?:整理|重複)[^。！？\n]{0,30}(?:履歴|まとめ|一覧)/.test(text)
+    || /(?:いつ|誰|だれ)[^。！？\n]{0,40}(?:変更|更新|整理)[^。！？\n]{0,40}(?:履歴|ログ|一覧|まとめ)/.test(text);
+  if (!explicitAuditLog) return null;
+
+  // A specifically worded duplicate-cleanup history question belongs to Phase 6.47.
+  if (/重複/.test(text) && /(?:整理|解消|統合)/.test(text) && !/監査ログ|操作履歴|監査履歴/.test(text)) return null;
+
+  const direct = parseBusinessAndDate(text);
+  const directMetricType = managementHistoryMetricType(text);
+  if (direct.businessKey) {
+    return {
+      businessKey:direct.businessKey,
+      dataDate:direct.dataDate || null,
+      metricType:directMetricType || null
+    };
+  }
+
+  const recentTurns = Array.isArray(history) ? history.slice(-8) : [];
+  for (let index = recentTurns.length - 1; index >= 0; index--) {
+    const turn = recentTurns[index];
+    if (!turn || turn.role !== 'user') continue;
+    const recentBusiness = parseBusinessAndDate(turn.content).businessKey;
+    if (!recentBusiness) continue;
+    return {
+      businessKey:recentBusiness,
+      dataDate:direct.dataDate || null,
+      metricType:directMetricType || null
+    };
+  }
+  return null;
+}
+
+function managementDataAuditLogAnswer(entries, query = {}) {
+  const rows = (Array.isArray(entries) ? entries : []).filter(Boolean);
+  const businessKey = query.businessKey || rows[0]?.business_key || null;
+  const businessName = businessKey === 'north-star-beans' ? 'NORTH STAR BEANS' : businessKey || '対象事業';
+  if (!rows.length) {
+    return `${businessName}には、条件に一致する経営データの監査ログはありません。`;
+  }
+
+  const registrations = rows.filter(row => row.event_type === 'registration').length;
+  const changes = rows.filter(row => row.event_type === 'change').length;
+  const cleanups = rows.filter(row => row.event_type === 'duplicate_resolution').length;
+  const lines = [
+    `${businessName}の経営データ総合監査ログは${rows.length}件です（登録${registrations}件・変更${changes}件・重複整理${cleanups}件）。`
+  ];
+  const maxDetails = 30;
+
+  for (const [index, row] of rows.slice(0, maxDetails).entries()) {
+    const eventAt = formatManagementHistoryChangedAt(row.event_at) || '日時不明';
+    const dateLabel = managementAuditDateLabel(row.data_date);
+    const metricName = managementAuditMetricLabel(row.metric_type);
+    const managementId = String(row.management_data_id ?? '');
+    const idText = managementId ? `（管理ID ${managementId}）` : '';
+
+    if (row.event_type === 'registration') {
+      const value = formatManagementHistoryValue(row.amount, String(row.currency || '').trim().toUpperCase()) || '値不明';
+      const supersededBy = row.superseded_by_management_data_id == null
+        ? ''
+        : ` 後に管理ID ${row.superseded_by_management_data_id}へ重複整理されています。`;
+      lines.push(`${index + 1}. ${eventAt}：${dateLabel} ${metricName}を${value}で登録${idText}。本人確認済みです。${supersededBy}`);
+      continue;
+    }
+
+    if (row.event_type === 'change') {
+      const before = formatManagementHistoryValue(row.previous_amount, String(row.previous_currency || '').trim().toUpperCase()) || '不明';
+      const after = formatManagementHistoryValue(row.new_amount, String(row.new_currency || '').trim().toUpperCase()) || '不明';
+      const reason = String(row.action_note || '').trim();
+      const reasonText = reason ? ` 理由・メモ: ${reason}。` : '';
+      lines.push(`${index + 1}. ${eventAt}：${dateLabel} ${metricName}を${before}から${after}へ変更${idText}。オーナー本人の確認操作です。${reasonText}`);
+      continue;
+    }
+
+    if (row.event_type === 'duplicate_resolution') {
+      const keptId = String(row.kept_management_data_id ?? managementId || '不明');
+      const supersededIds = managementCleanupJsonArray(row.superseded_management_data_ids)
+        .map(value => String(value))
+        .filter(Boolean);
+      const snapshots = managementCleanupJsonArray(row.original_rows);
+      const snapshotText = snapshots.length
+        ? snapshots.map(item => {
+            const id = String(item?.id ?? '?');
+            const value = formatManagementHistoryValue(item?.amount, String(item?.currency || '').trim().toUpperCase()) || '値不明';
+            return `管理ID ${id}=${value}`;
+          }).join('、')
+        : null;
+      const supersededText = supersededIds.length
+        ? `管理ID ${supersededIds.join('・')}を重複扱い`
+        : '重複扱いにした管理IDは記録上不明';
+      lines.push(`${index + 1}. ${eventAt}：${dateLabel} ${metricName}の重複整理。管理ID ${keptId}を残し、${supersededText}にしました。確認者はオーナー本人です。${snapshotText ? ` 整理時の値: ${snapshotText}。` : ''}`);
+    }
+  }
+
+  if (rows.length > maxDetails) {
+    lines.push(`ほか${rows.length - maxDetails}件の監査ログがあります。`);
+  }
+  return lines.join('\n');
+}
+
 function detectManagementDataBusinessAuditQuery(message, history = []) {
   const text = String(message || '').trim();
   if (!text) return null;
@@ -1598,4 +1703,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, detectManagementDataDuplicateResolutionRequest, managementDataDuplicateResolutionCandidates, managementDataDuplicateResolutionAnswer, detectManagementDataDuplicateResolutionHistoryQuery, managementDataDuplicateResolutionHistoryAnswer, detectManagementDataBusinessAuditQuery, managementDataBusinessAuditAnswer, detectManagementDataHistoryConsistencyQuery, managementDataHistoryConsistencyAnswer, managementDataHistoryAnswer, formatManagementHistoryValue, formatManagementHistoryChangedAt, detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, detectManagementDataDuplicateResolutionRequest, managementDataDuplicateResolutionCandidates, managementDataDuplicateResolutionAnswer, detectManagementDataDuplicateResolutionHistoryQuery, managementDataDuplicateResolutionHistoryAnswer, detectManagementDataAuditLogQuery, managementDataAuditLogAnswer, detectManagementDataBusinessAuditQuery, managementDataBusinessAuditAnswer, detectManagementDataHistoryConsistencyQuery, managementDataHistoryConsistencyAnswer, managementDataHistoryAnswer, formatManagementHistoryValue, formatManagementHistoryChangedAt, detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
