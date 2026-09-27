@@ -653,7 +653,12 @@ function detectManagementDataAuditLogQuery(message, history = [], now = new Date
     && hasRecentAuditLogContext
     && Boolean(direct.dataDate || directMetricType || eventTypes || limit || auditPeriod)
     && /だけ|のみ|直近|最新|最後|絞|限定|登録|変更|更新|訂正|修正|復元|重複整理|売上|来客数|客数|客単価|経費|費用|利益|現金残高|預金残高|今月|先月|\d{1,2}月|\d{1,2}日/.test(text);
-  if (!explicitAuditLog && !filterFollowUp) return null;
+  const standalonePeriodFilter = !explicitAuditLog
+    && Boolean(direct.businessKey)
+    && Boolean(auditPeriod)
+    && Boolean(eventTypes || limit)
+    && /だけ|のみ|直近|最新|最後|絞|限定|登録|変更|更新|訂正|修正|復元|重複整理/.test(text);
+  if (!explicitAuditLog && !filterFollowUp && !standalonePeriodFilter) return null;
 
   // A specifically worded duplicate-cleanup history question belongs to Phase 6.47,
   // unless the user explicitly asks for the comprehensive audit log.
