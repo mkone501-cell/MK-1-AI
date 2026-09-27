@@ -21,6 +21,7 @@ const { proposeMemory } = require('./knowledge/update-candidates');
 const { detectManagementDataCandidate, detectManagementDataCandidates, isSameManagementDataValue, managementDataCandidateAcknowledgement } = require('./management-data/candidates');
 const { PostgresManagementDataRepository } = require('./management-data/postgres-management-data-repository');
 const { migrateManagementData } = require('./management-data/migrate-management-data');
+const { detectHistoryPointRestoreRequest, resolveHistoryPoint, historyMinute } = require('./management-data/history-point-restore');
 const { detectManagementDataIdHistoryQuery, managementDataIdHistoryAnswer, detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, detectManagementDataDuplicateResolutionRequest, managementDataDuplicateResolutionCandidates, managementDataDuplicateResolutionAnswer, detectManagementDataDuplicateResolutionHistoryQuery, managementDataDuplicateResolutionHistoryAnswer, detectManagementDataAuditSummaryQuery, managementDataAuditSummaryAnswer, detectManagementDataAuditLogQuery, managementDataAuditLogAnswer, detectManagementDataBusinessAuditQuery, managementDataBusinessAuditAnswer, detectManagementDataHistoryConsistencyQuery, managementDataHistoryConsistencyAnswer, managementDataHistoryAnswer, detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -353,7 +354,55 @@ function createApplication(options = {}) {
         if (body.confirmed !== true || typeof body.originalText !== 'string') {
           return respondJson(req, res, 400, { error:'保存には本人の明示的な確認が必要です。' });
         }
-        const requestedOperation = body.operation === 'restore' ? 'restore' : body.operation === 'update' ? 'update' : 'create';
+        const requestedOperation = body.operation === 'history-restore' ? 'history-restore' : body.operation === 'restore' ? 'restore' : body.operation === 'update' ? 'update' : 'create';
+        if (requestedOperation === 'history-restore') {
+          const request = detectHistoryPointRestoreRequest(body.originalText, []);
+          const expectedEntryId = String(body.existingEntryId ?? '').trim();
+          const expectedHistoryId = String(body.restoreHistoryEntryId ?? '').trim();
+          const expectedHistoryIndex = Number(body.restoreHistoryIndex);
+          const expectedAmount = Number(body.previousAmount);
+          const expectedCurrency = String(body.previousCurrency || '').trim().toUpperCase();
+          const expectedUpdatedAt = String(body.expectedUpdatedAt || '').trim();
+          if (!request || !request.selector || !/^\d+$/.test(expectedEntryId) || !/^\d+$/.test(expectedHistoryId) ||
+              !Number.isInteger(expectedHistoryIndex) || expectedHistoryIndex < 1 || !Number.isFinite(expectedAmount) ||
+              !expectedCurrency || !expectedUpdatedAt || (request.managementDataId && String(request.managementDataId) !== expectedEntryId)) {
+            return respondJson(req, res, 409, { error:'復元対象を安全に確認できません。管理IDの変更履歴から、もう一度復元候補を作成してください。' });
+          }
+          const [existing, entries] = await Promise.all([
+            managementData.findById(auth.ownerEmail, expectedEntryId),
+            managementData.findHistoryByManagementDataId(auth.ownerEmail, expectedEntryId)
+          ]);
+          if (!existing || existing.superseded_by_management_data_id) {
+            const suffix = existing?.superseded_by_management_data_id ? `この管理IDは管理ID ${existing.superseded_by_management_data_id}へ重複整理済みです。` : '';
+            return respondJson(req, res, 409, { error:suffix || '復元対象を確認できません。管理IDの変更履歴を確認してください。' });
+          }
+          const resolved = resolveHistoryPoint(entries, request.selector);
+          if (!resolved.historyEntry || String(resolved.historyEntry.id) !== expectedHistoryId ||
+              resolved.historyIndex !== expectedHistoryIndex) {
+            return respondJson(req, res, 409, { error:'指定した履歴が候補作成後に変わったか、一意に確認できません。変更履歴からもう一度指定してください。', code:'MANAGEMENT_DATA_HISTORY_RESTORE_STALE' });
+          }
+          if (Number(existing.amount) !== expectedAmount ||
+              String(existing.currency || '').trim().toUpperCase() !== expectedCurrency ||
+              new Date(existing.updated_at).getTime() !== new Date(expectedUpdatedAt).getTime()) {
+            return respondJson(req, res, 409, { error:'現在の経営数値が復元候補作成後に変更されています。最新の変更履歴を確認して、もう一度復元候補を作成してください。', code:'MANAGEMENT_DATA_HISTORY_RESTORE_STALE' });
+          }
+          if (Number(existing.amount) === resolved.amount &&
+              String(existing.currency || '').trim().toUpperCase() === resolved.currency) {
+            return respondJson(req, res, 200, { managementData:existing, duplicate:true, alreadyCurrent:true });
+          }
+          const restored = await managementData.update(auth.ownerEmail, existing.id, {
+            businessKey:existing.business_key,
+            dataDate:new Date(existing.data_date).toISOString().slice(0, 10),
+            metricType:existing.metric_type,
+            amount:resolved.amount,
+            currency:resolved.currency,
+            confirmed:true,
+            source:'owner confirmed history point restore',
+            note:`owner confirmed history point restore\nsource history id: ${resolved.historyEntry.id}`
+          });
+          if (!restored) return respondJson(req, res, 409, { error:'復元対象が候補作成後に変更されています。最新の変更履歴を確認してください。', code:'MANAGEMENT_DATA_HISTORY_RESTORE_STALE' });
+          return respondJson(req, res, 200, { managementData:restored, updated:true, historyRestored:true, sourceHistoryId:resolved.historyEntry.id });
+        }
         if (requestedOperation === 'restore') {
           if (!isInitialManagementDataRestorePhrase(body.originalText)) {
             return respondJson(req, res, 409, { error:'復元の指示を安全に確認できません。もう一度変更履歴から復元を依頼してください。' });
@@ -524,8 +573,63 @@ function createApplication(options = {}) {
             }
           }
           let managementDataDirectAnswer = null;
+          let historyPointRestoreQuery = null;
           if (managementData) {
-            const idHistoryQuery = detectManagementDataIdHistoryQuery(message, history);
+            historyPointRestoreQuery = detectHistoryPointRestoreRequest(message, history);
+            if (historyPointRestoreQuery) {
+              managementDataCandidates = [];
+              managementDataCleanupCandidates = [];
+              managementDataDuplicateCount = 0;
+              try {
+                if (!historyPointRestoreQuery.managementDataId || !historyPointRestoreQuery.selector) {
+                  managementDataDirectAnswer = 'どの履歴へ戻すか指定してください。管理IDと「2番目」、変更日時、または「126,000円だった時点」を指定してください。まだ何も変更していません。';
+                } else {
+                  const [currentEntry, historyEntries] = await Promise.all([
+                    managementData.findById(auth.ownerEmail, historyPointRestoreQuery.managementDataId),
+                    managementData.findHistoryByManagementDataId(auth.ownerEmail, historyPointRestoreQuery.managementDataId)
+                  ]);
+                  if (!currentEntry) {
+                    managementDataDirectAnswer = `管理ID ${historyPointRestoreQuery.managementDataId} は見つかりません。管理IDを確認してください。`;
+                  } else if (currentEntry.superseded_by_management_data_id) {
+                    managementDataDirectAnswer = `この管理IDは管理ID ${currentEntry.superseded_by_management_data_id}へ重複整理済みです。整理済みの管理IDは復元できません。`;
+                  } else {
+                    const resolved = resolveHistoryPoint(historyEntries, historyPointRestoreQuery.selector);
+                    if (!resolved.historyEntry) {
+                      managementDataDirectAnswer = resolved.error === 'historyPointAmbiguous'
+                        ? '同じ値または日時に一致する履歴が複数あります。履歴番号またはより正確な変更日時を指定してください。まだ何も変更していません。'
+                        : '指定した履歴は見つかりません。管理IDの変更履歴を確認してから、履歴番号・日時・過去値を指定してください。';
+                    } else if (Number(currentEntry.amount) === resolved.amount &&
+                               String(currentEntry.currency || '').trim().toUpperCase() === resolved.currency) {
+                      managementDataDirectAnswer = `現在すでに${Number(currentEntry.amount).toLocaleString('ja-JP')}${currentEntry.currency === 'COUNT' ? '人' : '円'}です。復元は行っていません。`;
+                    } else {
+                      managementDataCandidates = [{
+                        kind:'management-data',
+                        businessKey:currentEntry.business_key,
+                        metricType:currentEntry.metric_type,
+                        amount:resolved.amount,
+                        currency:resolved.currency,
+                        dataDate:new Date(currentEntry.data_date).toISOString().slice(0, 10),
+                        source:'history point restore candidate',
+                        originalText:message,
+                        confirmed:false,
+                        operation:'history-restore',
+                        existingEntryId:currentEntry.id,
+                        previousAmount:Number(currentEntry.amount),
+                        previousCurrency:String(currentEntry.currency || '').trim().toUpperCase(),
+                        expectedUpdatedAt:currentEntry.updated_at,
+                        restoreHistoryEntryId:resolved.historyEntry.id,
+                        restoreHistoryIndex:resolved.historyIndex,
+                        restoreHistoryChangedAt:historyMinute(resolved.historyEntry.changed_at)
+                      }];
+                    }
+                  }
+                }
+              } catch {
+                logger.error('management_data.history_point_restore_candidate_failed');
+                return respondJson(req, res, 503, { error:'変更履歴から復元候補を作成できませんでした。時間をおいてお試しください。' });
+              }
+            }
+            const idHistoryQuery = historyPointRestoreQuery ? null : detectManagementDataIdHistoryQuery(message, history);
             if (idHistoryQuery) {
               managementDataCandidates = [];
               managementDataCleanupCandidates = [];
@@ -545,7 +649,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'管理IDの変更履歴を確認できませんでした。時間をおいてお試しください。' });
               }
             }
-            const auditSummaryQuery = idHistoryQuery ? null : detectManagementDataAuditSummaryQuery(message, history);
+            const auditSummaryQuery = historyPointRestoreQuery || idHistoryQuery ? null : detectManagementDataAuditSummaryQuery(message, history);
             if (auditSummaryQuery) {
               managementDataCandidates = [];
               managementDataCleanupCandidates = [];
@@ -558,7 +662,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'経営データの監査サマリーを確認できませんでした。時間をおいてお試しください。' });
               }
             }
-            const auditLogQuery = idHistoryQuery || auditSummaryQuery ? null : detectManagementDataAuditLogQuery(message, history);
+            const auditLogQuery = historyPointRestoreQuery || idHistoryQuery || auditSummaryQuery ? null : detectManagementDataAuditLogQuery(message, history);
             if (auditLogQuery) {
               managementDataCandidates = [];
               managementDataCleanupCandidates = [];
@@ -571,7 +675,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'経営データの監査ログを確認できませんでした。時間をおいてお試しください。' });
               }
             }
-            const duplicateResolutionHistoryQuery = idHistoryQuery || auditSummaryQuery || auditLogQuery
+            const duplicateResolutionHistoryQuery = historyPointRestoreQuery || idHistoryQuery || auditSummaryQuery || auditLogQuery
               ? null
               : detectManagementDataDuplicateResolutionHistoryQuery(message, history);
             if (duplicateResolutionHistoryQuery) {
@@ -589,7 +693,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'重複整理履歴を確認できませんでした。時間をおいてお試しください。' });
               }
             }
-            const duplicateResolutionQuery = idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery
+            const duplicateResolutionQuery = historyPointRestoreQuery || idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery
               ? null
               : detectManagementDataDuplicateResolutionRequest(message, history);
             if (duplicateResolutionQuery) {
@@ -613,7 +717,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'重複整理候補を作成できませんでした。時間をおいてお試しください。' });
               }
             }
-            const restoreQuery = idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery || duplicateResolutionQuery ? null : detectManagementDataRestoreRequest(message, history);
+            const restoreQuery = historyPointRestoreQuery || idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery || duplicateResolutionQuery ? null : detectManagementDataRestoreRequest(message, history);
             if (restoreQuery) {
               // A restore request owns this turn: never let a coincidental numeric phrase
               // fall through as an ordinary create/update candidate.
@@ -665,7 +769,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'変更履歴から復元候補を作成できませんでした。時間をおいてお試しください。' });
               }
             }
-            const currentStateQuery = idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery || duplicateResolutionQuery || restoreQuery ? null : detectManagementDataCurrentStateQuery(message, history);
+            const currentStateQuery = historyPointRestoreQuery || idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery || duplicateResolutionQuery || restoreQuery ? null : detectManagementDataCurrentStateQuery(message, history);
             if (currentStateQuery) {
               try {
                 const stateHistoryEntries = await managementData.findHistory(auth.ownerEmail, currentStateQuery);
@@ -688,7 +792,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'経営数値の現在値・変更日時を確認できませんでした。時間をおいてお試しください。' });
               }
             }
-            const businessAuditQuery = idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery || duplicateResolutionQuery || restoreQuery || currentStateQuery
+            const businessAuditQuery = historyPointRestoreQuery || idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery || duplicateResolutionQuery || restoreQuery || currentStateQuery
               ? null
               : detectManagementDataBusinessAuditQuery(message, history);
             if (businessAuditQuery) {
@@ -705,7 +809,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'経営データ全体の整合性を確認できませんでした。時間をおいてお試しください。' });
               }
             }
-            const consistencyQuery = idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery || duplicateResolutionQuery || restoreQuery || currentStateQuery || businessAuditQuery
+            const consistencyQuery = historyPointRestoreQuery || idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery || duplicateResolutionQuery || restoreQuery || currentStateQuery || businessAuditQuery
               ? null
               : detectManagementDataHistoryConsistencyQuery(message, history);
             if (consistencyQuery) {
@@ -730,7 +834,7 @@ function createApplication(options = {}) {
                 return respondJson(req, res, 503, { error:'経営数値と変更履歴の整合性を確認できませんでした。時間をおいてお試しください。' });
               }
             }
-            const historyQuery = idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery || duplicateResolutionQuery || restoreQuery || currentStateQuery || businessAuditQuery || consistencyQuery ? null : (detectManagementDataHistoryQuery(message)
+            const historyQuery = historyPointRestoreQuery || idHistoryQuery || auditSummaryQuery || auditLogQuery || duplicateResolutionHistoryQuery || duplicateResolutionQuery || restoreQuery || currentStateQuery || businessAuditQuery || consistencyQuery ? null : (detectManagementDataHistoryQuery(message)
               || detectManagementDataHistoryFollowUp(message, history));
             if (historyQuery) {
               try {
