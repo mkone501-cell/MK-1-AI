@@ -1153,3 +1153,43 @@ test('Phase 6.47 duplicate-resolution history lookup never crosses owners', asyn
   assert.equal(seen.params[2], null);
   assert.equal(seen.params[3], null);
 });
+
+
+test('Phase 6.48 comprehensive audit-log lookup is owner/business scoped and read-only', async () => {
+  let seen = null;
+  const repo = new PostgresManagementDataRepository({
+    async query(sql, params) { seen = { sql, params }; return { rows:[] }; }
+  });
+  await repo.findBusinessAuditLog('owner@example.com', {
+    businessKey:'north-star-beans',
+    dataDate:'2026-09-22',
+    metricType:'revenue'
+  });
+
+  assert.deepEqual(seen.params, ['owner@example.com','north-star-beans','2026-09-22','revenue']);
+  assert.match(seen.sql, /FROM management_data AS current/);
+  assert.match(seen.sql, /FROM management_data_history AS history/);
+  assert.match(seen.sql, /FROM management_data_duplicate_resolution_history AS cleanup/);
+  assert.match(seen.sql, /current\.owner_email = \$1/);
+  assert.match(seen.sql, /history\.owner_email = \$1/);
+  assert.match(seen.sql, /cleanup\.owner_email = \$1/);
+  assert.match(seen.sql, /business_key = \$2/);
+  assert.match(seen.sql, /confirmed_by_owner = TRUE/);
+  assert.match(seen.sql, /UNION ALL/);
+  assert.match(seen.sql, /ORDER BY event_at DESC/);
+  assert.doesNotMatch(seen.sql, /INSERT INTO/);
+  assert.doesNotMatch(seen.sql, /UPDATE management_data/);
+  assert.doesNotMatch(seen.sql, /DELETE FROM/);
+});
+
+test('Phase 6.48 registration audit reconstructs the original value from the first change history', async () => {
+  let seen = null;
+  const repo = new PostgresManagementDataRepository({
+    async query(sql, params) { seen = { sql, params }; return { rows:[] }; }
+  });
+  await repo.findBusinessAuditLog('owner@example.com', { businessKey:'north-star-beans' });
+  assert.match(seen.sql, /LEFT JOIN LATERAL/);
+  assert.match(seen.sql, /ORDER BY history\.changed_at ASC, history\.id ASC/);
+  assert.match(seen.sql, /COALESCE\(initial\.previous_amount, current\.amount\)/);
+  assert.match(seen.sql, /COALESCE\(initial\.previous_currency, current\.currency\)/);
+});

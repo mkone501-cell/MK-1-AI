@@ -193,7 +193,7 @@ test('Phase 6.43 routes current-value and last-change questions to deterministic
   assert.match(source, /managementData\.findHistory\(auth\.ownerEmail, currentStateQuery\)/);
   assert.match(source, /managementData\.findExact\(auth\.ownerEmail, resolvedStateQuery\)/);
   assert.match(source, /managementDataCurrentStateAnswer\(currentStateEntry, stateHistoryEntries, resolvedStateQuery\)/);
-  assert.match(source, /duplicateResolutionHistoryQuery \|\| duplicateResolutionQuery \|\| restoreQuery \|\| currentStateQuery \|\| businessAuditQuery \|\| consistencyQuery \? null/);
+  assert.match(source, /auditLogQuery \|\| duplicateResolutionHistoryQuery \|\| duplicateResolutionQuery \|\| restoreQuery \|\| currentStateQuery \|\| businessAuditQuery \|\| consistencyQuery \? null/);
 });
 
 test('Phase 6.43 keeps current-state lookup owner-scoped and read-only', () => {
@@ -296,4 +296,35 @@ test('Phase 6.47 duplicate-resolution history owns the turn before new cleanup c
   assert.doesNotMatch(block, /managementData\.resolveDuplicateGroup\(/);
   assert.doesNotMatch(block, /managementData\.update\(/);
   assert.doesNotMatch(block, /managementData\.create\(/);
+});
+
+
+test('Phase 6.48 routes comprehensive audit-log questions through owner-scoped read-only storage', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /detectManagementDataAuditLogQuery\(message, history\)/);
+  assert.match(source, /managementData\.findBusinessAuditLog\(auth\.ownerEmail, auditLogQuery\)/);
+  assert.match(source, /managementDataAuditLogAnswer\(auditLogEntries, auditLogQuery\)/);
+});
+
+test('Phase 6.48 comprehensive audit-log route owns the turn before all mutation-oriented management flows', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  const auditStart = source.indexOf('const auditLogQuery =');
+  const duplicateHistoryStart = source.indexOf('const duplicateResolutionHistoryQuery =', auditStart);
+  assert.ok(auditStart >= 0 && duplicateHistoryStart > auditStart);
+  const block = source.slice(auditStart, duplicateHistoryStart);
+  assert.match(block, /managementDataCandidates = \[\]/);
+  assert.match(block, /managementDataCleanupCandidates = \[\]/);
+  assert.match(block, /auth\.ownerEmail/);
+  assert.doesNotMatch(block, /managementData\.resolveDuplicateGroup\(/);
+  assert.doesNotMatch(block, /managementData\.update\(/);
+  assert.doesNotMatch(block, /managementData\.create\(/);
+  assert.doesNotMatch(block, /managementData\.delete\(/);
+});
+
+test('Phase 6.48 audit-log routing prevents later restore, cleanup, state and history handlers from also owning the turn', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /const duplicateResolutionHistoryQuery = auditLogQuery[\s\S]*\? null/);
+  assert.match(source, /const duplicateResolutionQuery = auditLogQuery \|\| duplicateResolutionHistoryQuery/);
+  assert.match(source, /const restoreQuery = auditLogQuery \|\| duplicateResolutionHistoryQuery \|\| duplicateResolutionQuery \? null/);
+  assert.match(source, /const currentStateQuery = auditLogQuery \|\| duplicateResolutionHistoryQuery \|\| duplicateResolutionQuery \|\| restoreQuery \? null/);
 });

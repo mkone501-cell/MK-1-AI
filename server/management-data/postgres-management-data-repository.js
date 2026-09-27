@@ -317,6 +317,134 @@ class PostgresManagementDataRepository {
     return result.rows || [];
   }
 
+  async findBusinessAuditLog(ownerEmail, query) {
+    if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
+    if (!query?.businessKey || typeof query.businessKey !== 'string' || !query.businessKey.trim()) return [];
+    const dataDate = typeof query.dataDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(query.dataDate)
+      ? query.dataDate
+      : null;
+    const metricType = typeof query.metricType === 'string' && METRIC_TYPES.has(query.metricType)
+      ? query.metricType
+      : null;
+    const result = await this.pool.query(
+      `WITH registrations AS (
+         SELECT 'registration'::TEXT AS event_type,
+                current.id::BIGINT AS event_id,
+                current.id::BIGINT AS management_data_id,
+                current.owner_email,
+                current.business_key,
+                current.data_date,
+                current.metric_type,
+                COALESCE(initial.previous_amount, current.amount) AS amount,
+                COALESCE(initial.previous_currency, current.currency) AS currency,
+                NULL::NUMERIC AS previous_amount,
+                NULL::NUMERIC AS new_amount,
+                NULL::TEXT AS previous_currency,
+                NULL::TEXT AS new_currency,
+                current.source,
+                current.note AS action_note,
+                current.confirmed_by_owner,
+                current.created_at AS event_at,
+                current.superseded_by_management_data_id,
+                current.superseded_at,
+                NULL::BIGINT AS kept_management_data_id,
+                NULL::JSONB AS superseded_management_data_ids,
+                NULL::JSONB AS original_rows
+           FROM management_data AS current
+           LEFT JOIN LATERAL (
+             SELECT history.previous_amount, history.previous_currency
+               FROM management_data_history AS history
+              WHERE history.owner_email = current.owner_email
+                AND history.management_data_id = current.id
+                AND history.confirmed_by_owner = TRUE
+              ORDER BY history.changed_at ASC, history.id ASC
+              LIMIT 1
+           ) AS initial ON TRUE
+          WHERE current.owner_email = $1
+            AND current.business_key = $2
+            AND current.confirmed_by_owner = TRUE
+            AND ($3::date IS NULL OR current.data_date = $3::date)
+            AND ($4::text IS NULL OR current.metric_type = $4)
+       ),
+       changes AS (
+         SELECT 'change'::TEXT AS event_type,
+                history.id::BIGINT AS event_id,
+                history.management_data_id::BIGINT AS management_data_id,
+                history.owner_email,
+                history.business_key,
+                history.data_date,
+                history.metric_type,
+                history.new_amount AS amount,
+                history.new_currency AS currency,
+                history.previous_amount,
+                history.new_amount,
+                history.previous_currency,
+                history.new_currency,
+                history.source,
+                history.change_note AS action_note,
+                history.confirmed_by_owner,
+                history.changed_at AS event_at,
+                current.superseded_by_management_data_id,
+                current.superseded_at,
+                NULL::BIGINT AS kept_management_data_id,
+                NULL::JSONB AS superseded_management_data_ids,
+                NULL::JSONB AS original_rows
+           FROM management_data_history AS history
+           JOIN management_data AS current
+             ON current.id = history.management_data_id
+            AND current.owner_email = history.owner_email
+          WHERE history.owner_email = $1
+            AND history.business_key = $2
+            AND history.confirmed_by_owner = TRUE
+            AND current.confirmed_by_owner = TRUE
+            AND ($3::date IS NULL OR history.data_date = $3::date)
+            AND ($4::text IS NULL OR history.metric_type = $4)
+       ),
+       duplicate_resolutions AS (
+         SELECT 'duplicate_resolution'::TEXT AS event_type,
+                cleanup.id::BIGINT AS event_id,
+                cleanup.kept_management_data_id::BIGINT AS management_data_id,
+                cleanup.owner_email,
+                cleanup.business_key,
+                cleanup.data_date,
+                cleanup.metric_type,
+                NULL::NUMERIC AS amount,
+                NULL::TEXT AS currency,
+                NULL::NUMERIC AS previous_amount,
+                NULL::NUMERIC AS new_amount,
+                NULL::TEXT AS previous_currency,
+                NULL::TEXT AS new_currency,
+                NULL::TEXT AS source,
+                cleanup.resolution_note AS action_note,
+                cleanup.confirmed_by_owner,
+                cleanup.resolved_at AS event_at,
+                NULL::BIGINT AS superseded_by_management_data_id,
+                NULL::TIMESTAMPTZ AS superseded_at,
+                cleanup.kept_management_data_id,
+                cleanup.superseded_management_data_ids,
+                cleanup.original_rows
+           FROM management_data_duplicate_resolution_history AS cleanup
+          WHERE cleanup.owner_email = $1
+            AND cleanup.business_key = $2
+            AND cleanup.confirmed_by_owner = TRUE
+            AND ($3::date IS NULL OR cleanup.data_date = $3::date)
+            AND ($4::text IS NULL OR cleanup.metric_type = $4)
+       )
+       SELECT *
+         FROM (
+           SELECT * FROM registrations
+           UNION ALL
+           SELECT * FROM changes
+           UNION ALL
+           SELECT * FROM duplicate_resolutions
+         ) AS audit_events
+        ORDER BY event_at DESC, event_type ASC, event_id DESC
+        LIMIT 200`,
+      [ownerEmail.trim(), query.businessKey.trim(), dataDate, metricType]
+    );
+    return result.rows || [];
+  }
+
   async findRange(ownerEmail, query) {
     if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
     if (!query?.businessKey || !query?.startDate || !query?.endDate) return [];
