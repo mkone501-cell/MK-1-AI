@@ -392,7 +392,7 @@ function createApplication(options = {}) {
           }
           const restored = await managementData.update(auth.ownerEmail, existing.id, {
             businessKey:existing.business_key,
-            dataDate:String(existing.data_date).slice(0, 10),
+            dataDate:new Date(existing.data_date).toISOString().slice(0, 10),
             metricType:existing.metric_type,
             amount:resolved.amount,
             currency:resolved.currency,
@@ -608,7 +608,7 @@ function createApplication(options = {}) {
                         metricType:currentEntry.metric_type,
                         amount:resolved.amount,
                         currency:resolved.currency,
-                        dataDate:String(currentEntry.data_date).slice(0, 10),
+                        dataDate:new Date(currentEntry.data_date).toISOString().slice(0, 10),
                         source:'history point restore candidate',
                         originalText:message,
                         confirmed:false,
