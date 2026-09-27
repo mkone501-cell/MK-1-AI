@@ -15,6 +15,7 @@ const {
   detectManagementDataDuplicateResolutionHistoryQuery,
   managementDataDuplicateResolutionHistoryAnswer,
   managementAuditLogPeriod,
+  managementAuditSummaryAnswerMode,
   detectManagementDataAuditSummaryQuery,
   managementDataAuditSummaryAnswer,
   detectManagementDataAuditLogQuery,
@@ -1216,10 +1217,10 @@ test('Phase 6.51 detects a direct audit summary request', () => {
   );
 });
 
-test('Phase 6.51 detects a direct change-count question', () => {
+test('Phase 6.52 detects a direct change-count question as a focused answer', () => {
   assert.deepEqual(
     detectManagementDataAuditSummaryQuery('NORTH STAR BEANSは何回変更した？', []),
-    { businessKey:'north-star-beans', dataDate:null, metricType:null }
+    { businessKey:'north-star-beans', dataDate:null, metricType:null, answerMode:'change_count' }
   );
 });
 
@@ -1245,11 +1246,11 @@ test('Phase 6.51 supports change-frequency and operator follow-ups after audit c
   ];
   assert.deepEqual(
     detectManagementDataAuditSummaryQuery('変更が一番多いデータはどれ？', history),
-    { businessKey:'north-star-beans', dataDate:null, metricType:null }
+    { businessKey:'north-star-beans', dataDate:null, metricType:null, answerMode:'most_changed' }
   );
   assert.deepEqual(
     detectManagementDataAuditSummaryQuery('誰が操作した？', history),
-    { businessKey:'north-star-beans', dataDate:null, metricType:null }
+    { businessKey:'north-star-beans', dataDate:null, metricType:null, answerMode:'operator' }
   );
 });
 
@@ -1316,4 +1317,152 @@ test('Phase 6.51 summary is clear when no matching audit events exist', () => {
     { businessKey:'north-star-beans', auditPeriodLabel:'先月' }
   );
   assert.match(answer, /条件に一致する経営データの監査イベントはありません/);
+});
+
+
+test('Phase 6.52 classifies focused audit-summary answer modes without changing full-summary requests', () => {
+  assert.equal(managementAuditSummaryAnswerMode('監査ログを要約して'), null);
+  assert.equal(managementAuditSummaryAnswerMode('何回変更した？'), 'change_count');
+  assert.equal(managementAuditSummaryAnswerMode('変更が最も多いデータは？'), 'most_changed');
+  assert.equal(managementAuditSummaryAnswerMode('誰が操作した？'), 'operator');
+  assert.equal(managementAuditSummaryAnswerMode('登録は何件？'), 'registration_count');
+  assert.equal(managementAuditSummaryAnswerMode('重複整理は何件？'), 'duplicate_resolution_count');
+});
+
+test('Phase 6.52 answers change-count questions directly instead of repeating the full summary', () => {
+  const answer = managementDataAuditSummaryAnswer({
+    total_count:14,
+    registration_count:8,
+    change_count:4,
+    duplicate_resolution_count:2,
+    owner_confirmed_count:14,
+    management_data_count:8,
+    top_changes:[]
+  }, {
+    businessKey:'north-star-beans',
+    answerMode:'change_count'
+  });
+
+  assert.equal(answer, 'NORTH STAR BEANSの変更操作は4回です。');
+  assert.doesNotMatch(answer, /監査イベントは合計/);
+  assert.doesNotMatch(answer, /変更回数が多い管理データ/);
+});
+
+test('Phase 6.52 answers most-changed questions with only the top management data', () => {
+  const answer = managementDataAuditSummaryAnswer({
+    total_count:14,
+    registration_count:8,
+    change_count:4,
+    duplicate_resolution_count:2,
+    owner_confirmed_count:14,
+    management_data_count:8,
+    top_changes:[
+      {
+        management_data_id:8,
+        data_date:'2026-08-15',
+        metric_type:'revenue',
+        change_count:4,
+        last_changed_at:'2026-09-26T14:44:00.000Z'
+      },
+      {
+        management_data_id:7,
+        data_date:'2026-09-22',
+        metric_type:'revenue',
+        change_count:1,
+        last_changed_at:'2026-09-23T00:07:22.000Z'
+      }
+    ]
+  }, {
+    businessKey:'north-star-beans',
+    answerMode:'most_changed'
+  });
+
+  assert.match(answer, /2026\/08\/15 売上（管理ID 8）で4回/);
+  assert.match(answer, /最終変更/);
+  assert.doesNotMatch(answer, /管理ID 7/);
+  assert.doesNotMatch(answer, /監査イベントは合計/);
+});
+
+test('Phase 6.52 answers operator questions concisely without inventing an actor identity', () => {
+  const answer = managementDataAuditSummaryAnswer({
+    total_count:14,
+    registration_count:8,
+    change_count:4,
+    duplicate_resolution_count:2,
+    owner_confirmed_count:14,
+    management_data_count:8,
+    top_changes:[]
+  }, {
+    businessKey:'north-star-beans',
+    answerMode:'operator'
+  });
+
+  assert.match(answer, /14件すべてオーナー本人確認済み/);
+  assert.match(answer, /実際の端末操作者を特定するIDは保存していない/);
+  assert.match(answer, /誰が操作したかまでは特定できません/);
+  assert.doesNotMatch(answer, /監査イベントは合計/);
+});
+
+test('Phase 6.52 focused answers keep period and metric scope visible', () => {
+  const answer = managementDataAuditSummaryAnswer({
+    total_count:4,
+    registration_count:0,
+    change_count:4,
+    duplicate_resolution_count:0,
+    owner_confirmed_count:4,
+    management_data_count:1,
+    top_changes:[]
+  }, {
+    businessKey:'north-star-beans',
+    auditPeriodLabel:'2026年9月20日〜2026年9月27日',
+    metricType:'revenue',
+    answerMode:'change_count'
+  });
+
+  assert.equal(
+    answer,
+    'NORTH STAR BEANSの変更操作は4回です。（2026年9月20日〜2026年9月27日、売上）'
+  );
+});
+
+test('Phase 6.52 can answer registration and duplicate-resolution counts directly', () => {
+  const summary = {
+    total_count:14,
+    registration_count:8,
+    change_count:4,
+    duplicate_resolution_count:2,
+    owner_confirmed_count:14,
+    management_data_count:8,
+    top_changes:[]
+  };
+  assert.equal(
+    managementDataAuditSummaryAnswer(summary, {
+      businessKey:'north-star-beans',
+      answerMode:'registration_count'
+    }),
+    'NORTH STAR BEANSの登録は8件です。'
+  );
+  assert.equal(
+    managementDataAuditSummaryAnswer(summary, {
+      businessKey:'north-star-beans',
+      answerMode:'duplicate_resolution_count'
+    }),
+    'NORTH STAR BEANSの重複整理は2件です。'
+  );
+});
+
+
+test('Phase 6.52 supports direct count questions without requiring prior audit context', () => {
+  assert.deepEqual(
+    detectManagementDataAuditSummaryQuery('NORTH STAR BEANSの変更は何回？', []),
+    { businessKey:'north-star-beans', dataDate:null, metricType:null, answerMode:'change_count' }
+  );
+  assert.deepEqual(
+    detectManagementDataAuditSummaryQuery('NORTH STAR BEANSの登録は何件？', []),
+    { businessKey:'north-star-beans', dataDate:null, metricType:null, answerMode:'registration_count' }
+  );
+  assert.deepEqual(
+    detectManagementDataAuditSummaryQuery('NORTH STAR BEANSの重複整理は何件？', []),
+    { businessKey:'north-star-beans', dataDate:null, metricType:null, answerMode:'duplicate_resolution_count' }
+  );
 });

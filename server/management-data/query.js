@@ -627,8 +627,34 @@ function managementAuditSummaryExplicitIntent(text) {
   return /(?:監査ログ|操作履歴|監査履歴)[^。！？\n]{0,40}(?:要約|集計|サマリー|まとめ|件数|回数|多い|最多)/.test(value)
     || /(?:要約|集計|サマリー)[^。！？\n]{0,40}(?:監査|履歴|登録|変更|更新|重複整理)/.test(value)
     || /(?:何回|何件)[^。！？\n]{0,30}(?:変更|更新|登録|重複整理|整理)/.test(value)
+    || /(?:変更|更新|登録|重複整理|重複解消)[^。！？\n]{0,30}(?:何回|何件)/.test(value)
     || /(?:変更|更新)[^。！？\n]{0,30}(?:回数|件数|多い|最多|一番多い)/.test(value)
     || /(?:誰|だれ)[^。！？\n]{0,20}(?:操作した|操作して|操作をした)/.test(value);
+}
+
+function managementAuditSummaryAnswerMode(text) {
+  const value = String(text || '').trim();
+  if (!value) return null;
+  if (/(?:変更|更新)[^。！？\n]{0,30}(?:一番多い|最も多い|最多|多いデータ|多かったデータ)/.test(value)
+      || /(?:一番多い|最も多い|最多)[^。！？\n]{0,30}(?:変更|更新)/.test(value)) {
+    return 'most_changed';
+  }
+  if (/(?:誰|だれ)[^。！？\n]{0,30}(?:操作した|操作して|操作をした)/.test(value)) {
+    return 'operator';
+  }
+  if (/(?:何回|何件|回数|件数)[^。！？\n]{0,30}(?:変更|更新)/.test(value)
+      || /(?:変更|更新)[^。！？\n]{0,30}(?:何回|何件|回数|件数)/.test(value)) {
+    return 'change_count';
+  }
+  if (/(?:何件|件数)[^。！？\n]{0,30}(?:登録)/.test(value)
+      || /(?:登録)[^。！？\n]{0,30}(?:何件|件数)/.test(value)) {
+    return 'registration_count';
+  }
+  if (/(?:何件|件数)[^。！？\n]{0,30}(?:重複整理|重複解消|整理)/.test(value)
+      || /(?:重複整理|重複解消)[^。！？\n]{0,30}(?:何件|件数)/.test(value)) {
+    return 'duplicate_resolution_count';
+  }
+  return null;
 }
 
 function detectManagementDataAuditSummaryQuery(message, history = [], now = new Date()) {
@@ -640,6 +666,7 @@ function detectManagementDataAuditSummaryQuery(message, history = [], now = new 
   const directMetricType = managementHistoryMetricType(text);
   const eventTypes = managementAuditLogEventTypes(text);
   const auditPeriod = managementAuditLogPeriod(text, now);
+  const answerMode = managementAuditSummaryAnswerMode(text);
 
   const recentTurns = Array.isArray(history) ? history.slice(-8) : [];
   let recentBusiness = null;
@@ -675,6 +702,7 @@ function detectManagementDataAuditSummaryQuery(message, history = [], now = new 
     query.auditEndDate = auditPeriod.endDate;
     query.auditPeriodLabel = auditPeriod.label;
   }
+  if (answerMode) query.answerMode = answerMode;
   return query;
 }
 
@@ -700,6 +728,36 @@ function managementDataAuditSummaryAnswer(summary, query = {}) {
     filterLabels.push(query.eventTypes.map(type => names[type] || type).join('・'));
   }
   const filterText = filterLabels.length ? `（絞り込み: ${filterLabels.join('、')}）` : '';
+  const conciseFilterText = filterLabels.length ? `（${filterLabels.join('、')}）` : '';
+  const topChanges = managementCleanupJsonArray(row.top_changes);
+
+  if (query.answerMode === 'change_count') {
+    return `${businessName}の変更操作は${changes}回です。${conciseFilterText}`;
+  }
+  if (query.answerMode === 'registration_count') {
+    return `${businessName}の登録は${registrations}件です。${conciseFilterText}`;
+  }
+  if (query.answerMode === 'duplicate_resolution_count') {
+    return `${businessName}の重複整理は${cleanups}件です。${conciseFilterText}`;
+  }
+  if (query.answerMode === 'most_changed') {
+    if (!topChanges.length) {
+      return `${businessName}には、条件内の変更履歴はありません。${conciseFilterText}`;
+    }
+    const item = topChanges[0];
+    const id = String(item?.management_data_id ?? '不明');
+    const dateLabel = managementAuditDateLabel(item?.data_date);
+    const metricName = managementAuditMetricLabel(item?.metric_type);
+    const count = Number(item?.change_count || 0);
+    const lastChanged = formatManagementHistoryChangedAt(item?.last_changed_at);
+    return `変更回数が最も多いのは、${dateLabel} ${metricName}（管理ID ${id}）で${count}回です。${lastChanged ? ` 最終変更は${lastChanged}です。` : ''}${conciseFilterText}`;
+  }
+  if (query.answerMode === 'operator') {
+    if (ownerConfirmed === total) {
+      return `監査記録上、${total}件すべてオーナー本人確認済みです。ただし、実際の端末操作者を特定するIDは保存していないため、誰が操作したかまでは特定できません。${conciseFilterText}`;
+    }
+    return `監査記録上、${total}件中${ownerConfirmed}件がオーナー本人確認済みです。実際の端末操作者を特定するIDは保存していないため、誰が操作したかまでは特定できません。${conciseFilterText}`;
+  }
 
   const lines = [
     `${businessName}の経営データ監査サマリー${filterText}です。`,
@@ -713,7 +771,6 @@ function managementDataAuditSummaryAnswer(summary, query = {}) {
     lines.push(`オーナー本人確認済みの監査イベントは${ownerConfirmed}件です。操作者IDは別項目では保存していません。`);
   }
 
-  const topChanges = managementCleanupJsonArray(row.top_changes);
   if (topChanges.length) {
     lines.push('変更回数が多い管理データ:');
     for (const [index, item] of topChanges.slice(0, 5).entries()) {
@@ -1935,4 +1992,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, detectManagementDataDuplicateResolutionRequest, managementDataDuplicateResolutionCandidates, managementDataDuplicateResolutionAnswer, detectManagementDataDuplicateResolutionHistoryQuery, managementDataDuplicateResolutionHistoryAnswer, managementAuditLogPeriod, detectManagementDataAuditSummaryQuery, managementDataAuditSummaryAnswer, detectManagementDataAuditLogQuery, managementDataAuditLogAnswer, detectManagementDataBusinessAuditQuery, managementDataBusinessAuditAnswer, detectManagementDataHistoryConsistencyQuery, managementDataHistoryConsistencyAnswer, managementDataHistoryAnswer, formatManagementHistoryValue, formatManagementHistoryChangedAt, detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, detectManagementDataDuplicateResolutionRequest, managementDataDuplicateResolutionCandidates, managementDataDuplicateResolutionAnswer, detectManagementDataDuplicateResolutionHistoryQuery, managementDataDuplicateResolutionHistoryAnswer, managementAuditLogPeriod, managementAuditSummaryAnswerMode, detectManagementDataAuditSummaryQuery, managementDataAuditSummaryAnswer, detectManagementDataAuditLogQuery, managementDataAuditLogAnswer, detectManagementDataBusinessAuditQuery, managementDataBusinessAuditAnswer, detectManagementDataHistoryConsistencyQuery, managementDataHistoryConsistencyAnswer, managementDataHistoryAnswer, formatManagementHistoryValue, formatManagementHistoryChangedAt, detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
