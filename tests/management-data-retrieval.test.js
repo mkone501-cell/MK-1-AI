@@ -1133,7 +1133,7 @@ test('Phase 6.47 duplicate-resolution history lookup is owner/business scoped an
     dataDate:'2026-09-22',
     metricType:'revenue'
   });
-  assert.deepEqual(seen.params, ['owner@example.com','north-star-beans','2026-09-22','revenue']);
+  assert.deepEqual(seen.params, ['owner@example.com','north-star-beans','2026-09-22','revenue',null,200]);
   assert.match(seen.sql, /FROM management_data_duplicate_resolution_history/);
   assert.match(seen.sql, /owner_email = \$1 AND business_key = \$2/);
   assert.match(seen.sql, /\(\$3::date IS NULL OR data_date = \$3::date\)/);
