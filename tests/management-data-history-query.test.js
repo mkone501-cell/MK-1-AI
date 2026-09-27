@@ -1450,3 +1450,19 @@ test('Phase 6.52 can answer registration and duplicate-resolution counts directl
     'NORTH STAR BEANSの重複整理は2件です。'
   );
 });
+
+
+test('Phase 6.52 supports direct count questions without requiring prior audit context', () => {
+  assert.deepEqual(
+    detectManagementDataAuditSummaryQuery('NORTH STAR BEANSの変更は何回？', []),
+    { businessKey:'north-star-beans', dataDate:null, metricType:null, answerMode:'change_count' }
+  );
+  assert.deepEqual(
+    detectManagementDataAuditSummaryQuery('NORTH STAR BEANSの登録は何件？', []),
+    { businessKey:'north-star-beans', dataDate:null, metricType:null, answerMode:'registration_count' }
+  );
+  assert.deepEqual(
+    detectManagementDataAuditSummaryQuery('NORTH STAR BEANSの重複整理は何件？', []),
+    { businessKey:'north-star-beans', dataDate:null, metricType:null, answerMode:'duplicate_resolution_count' }
+  );
+});
