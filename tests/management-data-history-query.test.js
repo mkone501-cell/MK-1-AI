@@ -885,6 +885,13 @@ test('Phase 6.48 detects an explicit comprehensive management audit-log question
   );
 });
 
+test('Phase 6.48 recognizes a natural who-what-when management audit question', () => {
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('NORTH STAR BEANSでは、いつ何を誰が変更・整理した？', []),
+    { businessKey:'north-star-beans', dataDate:null, metricType:null }
+  );
+});
+
 test('Phase 6.48 can filter the comprehensive audit log by business date and metric', () => {
   assert.deepEqual(
     detectManagementDataAuditLogQuery('2026年9月22日のNORTH STAR BEANSの売上の監査ログを教えて', []),
