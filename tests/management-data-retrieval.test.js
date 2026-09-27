@@ -1351,3 +1351,52 @@ test('Phase 6.51 audit summary rejects unsupported event types and reversed peri
   assert.equal(seen.params[5], null);
   assert.equal(seen.params[6], null);
 });
+
+
+test('Phase 6.53 management-ID lookup is owner scoped and can inspect superseded rows read-only', async () => {
+  let seen = null;
+  const repo = new PostgresManagementDataRepository({
+    async query(sql, params) {
+      seen = { sql, params };
+      return { rows:[{ id:'8', owner_email:'owner@example.com', confirmed_by_owner:true }] };
+    }
+  });
+
+  const row = await repo.findById('owner@example.com', '8');
+  assert.equal(row.id, '8');
+  assert.deepEqual(seen.params, ['owner@example.com','8']);
+  assert.match(seen.sql, /owner_email = \$1 AND id = \$2::BIGINT/);
+  assert.match(seen.sql, /confirmed_by_owner = TRUE/);
+  assert.doesNotMatch(seen.sql, /superseded_by_management_data_id IS NULL/);
+  assert.doesNotMatch(seen.sql, /INSERT INTO|UPDATE management_data|DELETE FROM/);
+});
+
+test('Phase 6.53 management-ID history is owner scoped, chronological and includes superseded-row history', async () => {
+  let seen = null;
+  const repo = new PostgresManagementDataRepository({
+    async query(sql, params) {
+      seen = { sql, params };
+      return { rows:[] };
+    }
+  });
+
+  await repo.findHistoryByManagementDataId('owner@example.com', '8');
+  assert.deepEqual(seen.params, ['owner@example.com','8']);
+  assert.match(seen.sql, /history\.owner_email = \$1/);
+  assert.match(seen.sql, /history\.management_data_id = \$2::BIGINT/);
+  assert.match(seen.sql, /current\.owner_email = \$1/);
+  assert.match(seen.sql, /history\.confirmed_by_owner = TRUE/);
+  assert.match(seen.sql, /ORDER BY history\.changed_at ASC, history\.id ASC/);
+  assert.doesNotMatch(seen.sql, /superseded_by_management_data_id IS NULL/);
+  assert.doesNotMatch(seen.sql, /INSERT INTO|UPDATE management_data|DELETE FROM/);
+});
+
+test('Phase 6.53 rejects malformed management IDs before querying storage', async () => {
+  let called = false;
+  const repo = new PostgresManagementDataRepository({
+    async query() { called = true; return { rows:[] }; }
+  });
+  assert.equal(await repo.findById('owner@example.com', '8 OR 1=1'), null);
+  assert.deepEqual(await repo.findHistoryByManagementDataId('owner@example.com', '8 OR 1=1'), []);
+  assert.equal(called, false);
+});
