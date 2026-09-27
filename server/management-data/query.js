@@ -573,7 +573,56 @@ function managementAuditLogEventTypes(text) {
   return filterSignal ? unique : null;
 }
 
-function detectManagementDataAuditLogQuery(message, history = []) {
+function managementAuditLogPeriod(text, now = new Date()) {
+  const value = String(text || '').replace(/[０-９]/g, char => String(char.charCodeAt(0) - 0xFF10));
+  const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const currentYear = jstNow.getUTCFullYear();
+  const currentMonth = jstNow.getUTCMonth() + 1;
+
+  if (/先月/.test(value)) {
+    const date = new Date(Date.UTC(currentYear, currentMonth - 2, 1));
+    const range = monthRange(date.getUTCFullYear(), date.getUTCMonth() + 1);
+    return range ? { startDate:range.startDate, endDate:range.endDate, label:'先月' } : null;
+  }
+  if (/今月/.test(value)) {
+    const range = monthRange(currentYear, currentMonth);
+    return range ? { startDate:range.startDate, endDate:range.endDate, label:'今月' } : null;
+  }
+
+  const jpRange = value.match(/(?:(20\d{2})年\s*)?(\d{1,2})月\s*(\d{1,2})日?\s*(?:から|〜|～|~|－|—|–)\s*(?:(20\d{2})年\s*)?(?:(\d{1,2})月\s*)?(\d{1,2})日/);
+  if (jpRange) {
+    const startYear = jpRange[1] ? Number(jpRange[1]) : currentYear;
+    const startMonth = Number(jpRange[2]);
+    const startDay = Number(jpRange[3]);
+    const endYear = jpRange[4] ? Number(jpRange[4]) : startYear;
+    const endMonth = jpRange[5] ? Number(jpRange[5]) : startMonth;
+    const endDay = Number(jpRange[6]);
+    const startDate = validIsoDate(startYear, startMonth, startDay);
+    const endDate = validIsoDate(endYear, endMonth, endDay);
+    if (startDate && endDate && startDate <= endDate) {
+      return { startDate, endDate, label:`${startYear}年${startMonth}月${startDay}日〜${endYear}年${endMonth}月${endDay}日` };
+    }
+  }
+
+  const isoRange = value.match(/(20\d{2})[-\/]([01]?\d)[-\/]([0-3]?\d)\s*(?:から|〜|～|~|－|—|–)\s*(20\d{2})[-\/]([01]?\d)[-\/]([0-3]?\d)/);
+  if (isoRange) {
+    const startDate = validIsoDate(Number(isoRange[1]), Number(isoRange[2]), Number(isoRange[3]));
+    const endDate = validIsoDate(Number(isoRange[4]), Number(isoRange[5]), Number(isoRange[6]));
+    if (startDate && endDate && startDate <= endDate) {
+      return { startDate, endDate, label:`${startDate.replace(/-/g, '/')}〜${endDate.replace(/-/g, '/')}` };
+    }
+  }
+
+  const explicitMonth = value.match(/(?:(20\d{2})年\s*)?(\d{1,2})月(?!\s*\d{1,2}日)/);
+  if (explicitMonth) {
+    const year = explicitMonth[1] ? Number(explicitMonth[1]) : currentYear;
+    const range = monthRange(year, Number(explicitMonth[2]));
+    if (range) return { startDate:range.startDate, endDate:range.endDate, label:range.label };
+  }
+  return null;
+}
+
+function detectManagementDataAuditLogQuery(message, history = [], now = new Date()) {
   const text = String(message || '').trim();
   if (!text) return null;
 
@@ -582,6 +631,7 @@ function detectManagementDataAuditLogQuery(message, history = []) {
   const directMetricType = managementHistoryMetricType(text);
   const eventTypes = managementAuditLogEventTypes(text);
   const limit = managementAuditLogLimit(text);
+  const auditPeriod = managementAuditLogPeriod(text, now);
 
   const recentTurns = Array.isArray(history) ? history.slice(-8) : [];
   let recentBusiness = null;
@@ -601,9 +651,14 @@ function detectManagementDataAuditLogQuery(message, history = []) {
 
   const filterFollowUp = !explicitAuditLog
     && hasRecentAuditLogContext
-    && Boolean(direct.dataDate || directMetricType || eventTypes || limit)
-    && /だけ|のみ|直近|最新|最後|絞|限定|登録|変更|更新|訂正|修正|復元|重複整理|売上|来客数|客数|客単価|経費|費用|利益|現金残高|預金残高/.test(text);
-  if (!explicitAuditLog && !filterFollowUp) return null;
+    && Boolean(direct.dataDate || directMetricType || eventTypes || limit || auditPeriod)
+    && /だけ|のみ|直近|最新|最後|絞|限定|登録|変更|更新|訂正|修正|復元|重複整理|売上|来客数|客数|客単価|経費|費用|利益|現金残高|預金残高|今月|先月|\d{1,2}月|\d{1,2}日/.test(text);
+  const standalonePeriodFilter = !explicitAuditLog
+    && Boolean(direct.businessKey)
+    && Boolean(auditPeriod)
+    && Boolean(eventTypes || limit)
+    && /だけ|のみ|直近|最新|最後|絞|限定|登録|変更|更新|訂正|修正|復元|重複整理/.test(text);
+  if (!explicitAuditLog && !filterFollowUp && !standalonePeriodFilter) return null;
 
   // A specifically worded duplicate-cleanup history question belongs to Phase 6.47,
   // unless the user explicitly asks for the comprehensive audit log.
@@ -615,11 +670,16 @@ function detectManagementDataAuditLogQuery(message, history = []) {
   if (!businessKey) return null;
   const query = {
     businessKey,
-    dataDate:direct.dataDate || null,
+    dataDate:auditPeriod ? null : (direct.dataDate || null),
     metricType:directMetricType || null
   };
   if (eventTypes) query.eventTypes = eventTypes;
   if (limit) query.limit = limit;
+  if (auditPeriod) {
+    query.auditStartDate = auditPeriod.startDate;
+    query.auditEndDate = auditPeriod.endDate;
+    query.auditPeriodLabel = auditPeriod.label;
+  }
   return query;
 }
 
@@ -635,6 +695,7 @@ function managementDataAuditLogAnswer(entries, query = {}) {
   const changes = rows.filter(row => row.event_type === 'change').length;
   const cleanups = rows.filter(row => row.event_type === 'duplicate_resolution').length;
   const filterLabels = [];
+  if (query.auditPeriodLabel) filterLabels.push(query.auditPeriodLabel);
   if (query.metricType) filterLabels.push(managementAuditMetricLabel(query.metricType));
   if (Array.isArray(query.eventTypes) && query.eventTypes.length) {
     const names = { registration:'登録', change:'変更', duplicate_resolution:'重複整理' };
@@ -1760,4 +1821,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, detectManagementDataDuplicateResolutionRequest, managementDataDuplicateResolutionCandidates, managementDataDuplicateResolutionAnswer, detectManagementDataDuplicateResolutionHistoryQuery, managementDataDuplicateResolutionHistoryAnswer, detectManagementDataAuditLogQuery, managementDataAuditLogAnswer, detectManagementDataBusinessAuditQuery, managementDataBusinessAuditAnswer, detectManagementDataHistoryConsistencyQuery, managementDataHistoryConsistencyAnswer, managementDataHistoryAnswer, formatManagementHistoryValue, formatManagementHistoryChangedAt, detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, detectManagementDataDuplicateResolutionRequest, managementDataDuplicateResolutionCandidates, managementDataDuplicateResolutionAnswer, detectManagementDataDuplicateResolutionHistoryQuery, managementDataDuplicateResolutionHistoryAnswer, managementAuditLogPeriod, detectManagementDataAuditLogQuery, managementDataAuditLogAnswer, detectManagementDataBusinessAuditQuery, managementDataBusinessAuditAnswer, detectManagementDataHistoryConsistencyQuery, managementDataHistoryConsistencyAnswer, managementDataHistoryAnswer, formatManagementHistoryValue, formatManagementHistoryChangedAt, detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };

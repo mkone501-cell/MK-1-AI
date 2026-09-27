@@ -1166,7 +1166,7 @@ test('Phase 6.48 comprehensive audit-log lookup is owner/business scoped and rea
     metricType:'revenue'
   });
 
-  assert.deepEqual(seen.params, ['owner@example.com','north-star-beans','2026-09-22','revenue']);
+  assert.deepEqual(seen.params, ['owner@example.com','north-star-beans','2026-09-22','revenue',null,200,null,null]);
   assert.match(seen.sql, /FROM management_data AS current/);
   assert.match(seen.sql, /FROM management_data_history AS history/);
   assert.match(seen.sql, /FROM management_data_duplicate_resolution_history AS cleanup/);
@@ -1207,7 +1207,7 @@ test('Phase 6.49 audit-log repository applies event-type and latest-N filters sa
     limit:10
   });
 
-  assert.deepEqual(seen.params, ['owner@example.com','north-star-beans',null,'revenue',['change'],10]);
+  assert.deepEqual(seen.params, ['owner@example.com','north-star-beans',null,'revenue',['change'],10,null,null]);
   assert.match(seen.sql, /\$5::text\[\] IS NULL OR event_type = ANY\(\$5::text\[\]\)/);
   assert.match(seen.sql, /LIMIT \$6/);
   assert.doesNotMatch(seen.sql, /INSERT INTO/);
@@ -1245,4 +1245,44 @@ test('Phase 6.49 requesting all audit event types uses the unfiltered event set'
 
   assert.equal(seen.params[4], null);
   assert.equal(seen.params[5], 5);
+});
+
+
+test('Phase 6.50 audit-log repository filters operation timestamps in Tokyo time', async () => {
+  let seen = null;
+  const repo = new PostgresManagementDataRepository({
+    async query(sql, params) { seen = { sql, params }; return { rows:[] }; }
+  });
+  await repo.findBusinessAuditLog('owner@example.com', {
+    businessKey:'north-star-beans',
+    eventTypes:['change'],
+    auditStartDate:'2026-09-20',
+    auditEndDate:'2026-09-27',
+    limit:10
+  });
+
+  assert.deepEqual(
+    seen.params,
+    ['owner@example.com','north-star-beans',null,null,['change'],10,'2026-09-20','2026-09-27']
+  );
+  assert.match(seen.sql, /event_at >= \(\$7::date::timestamp AT TIME ZONE 'Asia\/Tokyo'\)/);
+  assert.match(seen.sql, /event_at < \(\(\$8::date \+ 1\)::timestamp AT TIME ZONE 'Asia\/Tokyo'\)/);
+  assert.doesNotMatch(seen.sql, /INSERT INTO/);
+  assert.doesNotMatch(seen.sql, /UPDATE management_data/);
+  assert.doesNotMatch(seen.sql, /DELETE FROM/);
+});
+
+test('Phase 6.50 invalid or reversed operation-date ranges are ignored safely', async () => {
+  let seen = null;
+  const repo = new PostgresManagementDataRepository({
+    async query(sql, params) { seen = { sql, params }; return { rows:[] }; }
+  });
+  await repo.findBusinessAuditLog('owner@example.com', {
+    businessKey:'north-star-beans',
+    auditStartDate:'2026-09-28',
+    auditEndDate:'2026-09-20'
+  });
+
+  assert.equal(seen.params[6], null);
+  assert.equal(seen.params[7], null);
 });
