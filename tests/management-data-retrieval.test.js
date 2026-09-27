@@ -1286,3 +1286,68 @@ test('Phase 6.50 invalid or reversed operation-date ranges are ignored safely', 
   assert.equal(seen.params[6], null);
   assert.equal(seen.params[7], null);
 });
+
+
+test('Phase 6.51 audit summary is owner/business scoped, aggregate-only and read-only', async () => {
+  let seen = null;
+  const repo = new PostgresManagementDataRepository({
+    async query(sql, params) {
+      seen = { sql, params };
+      return {
+        rows:[{
+          total_count:14,
+          registration_count:8,
+          change_count:4,
+          duplicate_resolution_count:2,
+          owner_confirmed_count:14,
+          management_data_count:8,
+          top_changes:[]
+        }]
+      };
+    }
+  });
+
+  const result = await repo.findBusinessAuditSummary('owner@example.com', {
+    businessKey:'north-star-beans',
+    metricType:'revenue',
+    eventTypes:['change'],
+    auditStartDate:'2026-09-20',
+    auditEndDate:'2026-09-27'
+  });
+
+  assert.equal(result.total_count, 14);
+  assert.deepEqual(
+    seen.params,
+    ['owner@example.com','north-star-beans',null,'revenue',['change'],'2026-09-20','2026-09-27']
+  );
+  assert.match(seen.sql, /FROM management_data AS current/);
+  assert.match(seen.sql, /FROM management_data_history AS history/);
+  assert.match(seen.sql, /FROM management_data_duplicate_resolution_history AS cleanup/);
+  assert.match(seen.sql, /COUNT\(\*\) FILTER \(WHERE event_type = 'change'\)/);
+  assert.match(seen.sql, /change_counts AS/);
+  assert.match(seen.sql, /LIMIT 5/);
+  assert.match(seen.sql, /owner_email = \$1/);
+  assert.match(seen.sql, /business_key = \$2/);
+  assert.match(seen.sql, /AT TIME ZONE 'Asia\/Tokyo'/);
+  assert.doesNotMatch(seen.sql, /INSERT INTO/);
+  assert.doesNotMatch(seen.sql, /UPDATE management_data/);
+  assert.doesNotMatch(seen.sql, /DELETE FROM/);
+});
+
+test('Phase 6.51 audit summary rejects unsupported event types and reversed periods safely', async () => {
+  let seen = null;
+  const repo = new PostgresManagementDataRepository({
+    async query(sql, params) { seen = { sql, params }; return { rows:[{ total_count:0 }] }; }
+  });
+
+  await repo.findBusinessAuditSummary('owner@example.com', {
+    businessKey:'north-star-beans',
+    eventTypes:['change','not-real'],
+    auditStartDate:'2026-09-28',
+    auditEndDate:'2026-09-20'
+  });
+
+  assert.deepEqual(seen.params[4], ['change']);
+  assert.equal(seen.params[5], null);
+  assert.equal(seen.params[6], null);
+});
