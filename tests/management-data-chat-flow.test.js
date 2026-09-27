@@ -193,7 +193,7 @@ test('Phase 6.43 routes current-value and last-change questions to deterministic
   assert.match(source, /managementData\.findHistory\(auth\.ownerEmail, currentStateQuery\)/);
   assert.match(source, /managementData\.findExact\(auth\.ownerEmail, resolvedStateQuery\)/);
   assert.match(source, /managementDataCurrentStateAnswer\(currentStateEntry, stateHistoryEntries, resolvedStateQuery\)/);
-  assert.match(source, /auditLogQuery \|\| duplicateResolutionHistoryQuery \|\| duplicateResolutionQuery \|\| restoreQuery \|\| currentStateQuery \|\| businessAuditQuery \|\| consistencyQuery \? null/);
+  assert.match(source, /auditSummaryQuery \|\| auditLogQuery \|\| duplicateResolutionHistoryQuery \|\| duplicateResolutionQuery \|\| restoreQuery \|\| currentStateQuery \|\| businessAuditQuery \|\| consistencyQuery \? null/);
 });
 
 test('Phase 6.43 keeps current-state lookup owner-scoped and read-only', () => {
@@ -323,8 +323,40 @@ test('Phase 6.48 comprehensive audit-log route owns the turn before all mutation
 
 test('Phase 6.48 audit-log routing prevents later restore, cleanup, state and history handlers from also owning the turn', () => {
   const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
-  assert.match(source, /const duplicateResolutionHistoryQuery = auditLogQuery[\s\S]*\? null/);
-  assert.match(source, /const duplicateResolutionQuery = auditLogQuery \|\| duplicateResolutionHistoryQuery/);
-  assert.match(source, /const restoreQuery = auditLogQuery \|\| duplicateResolutionHistoryQuery \|\| duplicateResolutionQuery \? null/);
-  assert.match(source, /const currentStateQuery = auditLogQuery \|\| duplicateResolutionHistoryQuery \|\| duplicateResolutionQuery \|\| restoreQuery \? null/);
+  assert.match(source, /const duplicateResolutionHistoryQuery = auditSummaryQuery \|\| auditLogQuery[\s\S]*\? null/);
+  assert.match(source, /const duplicateResolutionQuery = auditSummaryQuery \|\| auditLogQuery \|\| duplicateResolutionHistoryQuery/);
+  assert.match(source, /const restoreQuery = auditSummaryQuery \|\| auditLogQuery \|\| duplicateResolutionHistoryQuery \|\| duplicateResolutionQuery \? null/);
+  assert.match(source, /const currentStateQuery = auditSummaryQuery \|\| auditLogQuery \|\| duplicateResolutionHistoryQuery \|\| duplicateResolutionQuery \|\| restoreQuery \? null/);
+});
+
+
+test('Phase 6.51 routes audit-summary questions through owner-scoped aggregate read-only storage', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /detectManagementDataAuditSummaryQuery\(message, history\)/);
+  assert.match(source, /managementData\.findBusinessAuditSummary\(auth\.ownerEmail, auditSummaryQuery\)/);
+  assert.match(source, /managementDataAuditSummaryAnswer\(auditSummary, auditSummaryQuery\)/);
+});
+
+test('Phase 6.51 audit-summary route owns the turn before detailed audit-log and mutation flows', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  const summaryStart = source.indexOf('const auditSummaryQuery =');
+  const logStart = source.indexOf('const auditLogQuery =', summaryStart);
+  assert.ok(summaryStart >= 0 && logStart > summaryStart);
+  const block = source.slice(summaryStart, logStart);
+  assert.match(block, /managementDataCandidates = \[\]/);
+  assert.match(block, /managementDataCleanupCandidates = \[\]/);
+  assert.match(block, /auth\.ownerEmail/);
+  assert.doesNotMatch(block, /managementData\.resolveDuplicateGroup\(/);
+  assert.doesNotMatch(block, /managementData\.update\(/);
+  assert.doesNotMatch(block, /managementData\.create\(/);
+  assert.doesNotMatch(block, /managementData\.delete\(/);
+});
+
+test('Phase 6.51 audit-summary routing suppresses all later management-data handlers for the same turn', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /const auditLogQuery = auditSummaryQuery \? null : detectManagementDataAuditLogQuery/);
+  assert.match(source, /const duplicateResolutionHistoryQuery = auditSummaryQuery \|\| auditLogQuery/);
+  assert.match(source, /const businessAuditQuery = auditSummaryQuery \|\| auditLogQuery/);
+  assert.match(source, /const consistencyQuery = auditSummaryQuery \|\| auditLogQuery/);
+  assert.match(source, /const historyQuery = auditSummaryQuery \|\| auditLogQuery/);
 });
