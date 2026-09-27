@@ -536,43 +536,91 @@ function managementDataDuplicateResolutionHistoryAnswer(entries, query = {}) {
   return lines.join('\n');
 }
 
+function managementAuditLogExplicitIntent(text) {
+  const value = String(text || '');
+  return /(?:総合)?監査ログ/.test(value)
+    || /経営(?:データ|数値)[^。！？\n]{0,30}(?:操作履歴|監査履歴)/.test(value)
+    || /(?:登録|変更|更新|訂正|修正|復元)[^。！？\n]{0,30}(?:整理|重複)[^。！？\n]{0,30}(?:履歴|まとめ|一覧)/.test(value)
+    || /(?:いつ|誰|だれ)[^。！？\n]{0,40}(?:変更|更新|整理)[^。！？\n]{0,40}(?:履歴|ログ|一覧|まとめ)/.test(value)
+    || /(?:いつ|何を|なにを|誰|だれ)[^。！？\n]{0,60}(?:変更|更新|整理)[^。！？\n]{0,30}(?:した|された|行った|実行した)/.test(value);
+}
+
+function managementAuditLogLimit(text) {
+  const normalized = String(text || '').replace(/[０-９]/g, char => String(char.charCodeAt(0) - 0xFF10));
+  const match = normalized.match(/(?:直近|最新|最後(?:の)?|新しい順(?:で)?)[^\d]{0,8}(\d{1,3})\s*件/)
+    || normalized.match(/(\d{1,3})\s*件(?:だけ|のみ)/);
+  if (!match) return null;
+  const value = Number(match[1]);
+  if (!Number.isInteger(value) || value < 1) return null;
+  return Math.min(value, 50);
+}
+
+function managementAuditLogEventTypes(text) {
+  const value = String(text || '');
+  const types = [];
+  if (/登録/.test(value)) types.push('registration');
+  if (/変更|更新|訂正|修正|復元/.test(value)) types.push('change');
+  if (/重複(?:整理|解消|統合)/.test(value)
+      || /(?:変更|更新)[・と、\s]*(?:整理)/.test(value)
+      || /(?:整理)[・と、\s]*(?:変更|更新)/.test(value)) {
+    types.push('duplicate_resolution');
+  }
+  const unique = [...new Set(types)];
+  if (!unique.length || unique.length === 3) return null;
+  const filterSignal = /だけ|のみ|絞|限定/.test(value)
+    || /(?:登録|変更|更新|訂正|修正|復元|重複整理)[^。！？\n]{0,20}(?:履歴|ログ|一覧|まとめ)/.test(value)
+    || unique.length > 1;
+  return filterSignal ? unique : null;
+}
+
 function detectManagementDataAuditLogQuery(message, history = []) {
   const text = String(message || '').trim();
   if (!text) return null;
 
-  const explicitAuditLog = /(?:総合)?監査ログ/.test(text)
-    || /経営(?:データ|数値)[^。！？\n]{0,30}(?:操作履歴|監査履歴)/.test(text)
-    || /(?:登録|変更|更新|訂正|修正|復元)[^。！？\n]{0,30}(?:整理|重複)[^。！？\n]{0,30}(?:履歴|まとめ|一覧)/.test(text)
-    || /(?:いつ|誰|だれ)[^。！？\n]{0,40}(?:変更|更新|整理)[^。！？\n]{0,40}(?:履歴|ログ|一覧|まとめ)/.test(text)
-    || /(?:いつ|何を|なにを|誰|だれ)[^。！？\n]{0,60}(?:変更|更新|整理)[^。！？\n]{0,30}(?:した|された|行った|実行した)/.test(text);
-  if (!explicitAuditLog) return null;
-
-  // A specifically worded duplicate-cleanup history question belongs to Phase 6.47.
-  if (/重複/.test(text) && /(?:整理|解消|統合)/.test(text) && !/監査ログ|操作履歴|監査履歴/.test(text)) return null;
-
+  const explicitAuditLog = managementAuditLogExplicitIntent(text);
   const direct = parseBusinessAndDate(text);
   const directMetricType = managementHistoryMetricType(text);
-  if (direct.businessKey) {
-    return {
-      businessKey:direct.businessKey,
-      dataDate:direct.dataDate || null,
-      metricType:directMetricType || null
-    };
-  }
+  const eventTypes = managementAuditLogEventTypes(text);
+  const limit = managementAuditLogLimit(text);
 
   const recentTurns = Array.isArray(history) ? history.slice(-8) : [];
+  let recentBusiness = null;
+  let hasRecentAuditLogContext = false;
   for (let index = recentTurns.length - 1; index >= 0; index--) {
     const turn = recentTurns[index];
     if (!turn || turn.role !== 'user') continue;
-    const recentBusiness = parseBusinessAndDate(turn.content).businessKey;
-    if (!recentBusiness) continue;
-    return {
-      businessKey:recentBusiness,
-      dataDate:direct.dataDate || null,
-      metricType:directMetricType || null
-    };
+    const turnText = String(turn.content || '');
+    if (!hasRecentAuditLogContext && managementAuditLogExplicitIntent(turnText)) {
+      hasRecentAuditLogContext = true;
+    }
+    if (!recentBusiness) {
+      recentBusiness = parseBusinessAndDate(turnText).businessKey;
+    }
+    if (hasRecentAuditLogContext && recentBusiness) break;
   }
-  return null;
+
+  const filterFollowUp = !explicitAuditLog
+    && hasRecentAuditLogContext
+    && Boolean(direct.dataDate || directMetricType || eventTypes || limit)
+    && /だけ|のみ|直近|最新|最後|絞|限定|登録|変更|更新|訂正|修正|復元|重複整理|売上|来客数|客数|客単価|経費|費用|利益|現金残高|預金残高/.test(text);
+  if (!explicitAuditLog && !filterFollowUp) return null;
+
+  // A specifically worded duplicate-cleanup history question belongs to Phase 6.47,
+  // unless the user explicitly asks for the comprehensive audit log.
+  if (/重複/.test(text) && /(?:整理|解消|統合)/.test(text)
+      && !/監査ログ|操作履歴|監査履歴/.test(text)
+      && !filterFollowUp) return null;
+
+  const businessKey = direct.businessKey || recentBusiness;
+  if (!businessKey) return null;
+  const query = {
+    businessKey,
+    dataDate:direct.dataDate || null,
+    metricType:directMetricType || null
+  };
+  if (eventTypes) query.eventTypes = eventTypes;
+  if (limit) query.limit = limit;
+  return query;
 }
 
 function managementDataAuditLogAnswer(entries, query = {}) {
@@ -586,10 +634,18 @@ function managementDataAuditLogAnswer(entries, query = {}) {
   const registrations = rows.filter(row => row.event_type === 'registration').length;
   const changes = rows.filter(row => row.event_type === 'change').length;
   const cleanups = rows.filter(row => row.event_type === 'duplicate_resolution').length;
+  const filterLabels = [];
+  if (query.metricType) filterLabels.push(managementAuditMetricLabel(query.metricType));
+  if (Array.isArray(query.eventTypes) && query.eventTypes.length) {
+    const names = { registration:'登録', change:'変更', duplicate_resolution:'重複整理' };
+    filterLabels.push(query.eventTypes.map(type => names[type] || type).join('・'));
+  }
+  if (Number.isInteger(query.limit)) filterLabels.push(`直近${query.limit}件`);
+  const filterText = filterLabels.length ? `（絞り込み: ${filterLabels.join('、')}）` : '';
   const lines = [
-    `${businessName}の経営データ総合監査ログは${rows.length}件です（登録${registrations}件・変更${changes}件・重複整理${cleanups}件）。`
+    `${businessName}の経営データ総合監査ログ${filterText}は${rows.length}件です（登録${registrations}件・変更${changes}件・重複整理${cleanups}件）。`
   ];
-  const maxDetails = 30;
+  const maxDetails = Number.isInteger(query.limit) ? Math.min(query.limit, 50) : 30;
 
   for (const [index, row] of rows.slice(0, maxDetails).entries()) {
     const eventAt = formatManagementHistoryChangedAt(row.event_at) || '日時不明';

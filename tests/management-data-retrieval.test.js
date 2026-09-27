@@ -1133,7 +1133,7 @@ test('Phase 6.47 duplicate-resolution history lookup is owner/business scoped an
     dataDate:'2026-09-22',
     metricType:'revenue'
   });
-  assert.deepEqual(seen.params, ['owner@example.com','north-star-beans','2026-09-22','revenue']);
+  assert.deepEqual(seen.params, ['owner@example.com','north-star-beans','2026-09-22','revenue',null,200]);
   assert.match(seen.sql, /FROM management_data_duplicate_resolution_history/);
   assert.match(seen.sql, /owner_email = \$1 AND business_key = \$2/);
   assert.match(seen.sql, /\(\$3::date IS NULL OR data_date = \$3::date\)/);
@@ -1192,4 +1192,57 @@ test('Phase 6.48 registration audit reconstructs the original value from the fir
   assert.match(seen.sql, /ORDER BY history\.changed_at ASC, history\.id ASC/);
   assert.match(seen.sql, /COALESCE\(initial\.previous_amount, current\.amount\)/);
   assert.match(seen.sql, /COALESCE\(initial\.previous_currency, current\.currency\)/);
+});
+
+
+test('Phase 6.49 audit-log repository applies event-type and latest-N filters safely', async () => {
+  let seen = null;
+  const repo = new PostgresManagementDataRepository({
+    async query(sql, params) { seen = { sql, params }; return { rows:[] }; }
+  });
+  await repo.findBusinessAuditLog('owner@example.com', {
+    businessKey:'north-star-beans',
+    metricType:'revenue',
+    eventTypes:['change'],
+    limit:10
+  });
+
+  assert.deepEqual(seen.params, ['owner@example.com','north-star-beans',null,'revenue',['change'],10]);
+  assert.match(seen.sql, /\$5::text\[\] IS NULL OR event_type = ANY\(\$5::text\[\]\)/);
+  assert.match(seen.sql, /LIMIT \$6/);
+  assert.doesNotMatch(seen.sql, /INSERT INTO/);
+  assert.doesNotMatch(seen.sql, /UPDATE management_data/);
+  assert.doesNotMatch(seen.sql, /DELETE FROM/);
+});
+
+test('Phase 6.49 audit-log repository ignores unsupported event types and unsafe limits', async () => {
+  let seen = null;
+  const repo = new PostgresManagementDataRepository({
+    async query(sql, params) { seen = { sql, params }; return { rows:[] }; }
+  });
+  await repo.findBusinessAuditLog('owner@example.com', {
+    businessKey:'north-star-beans',
+    eventTypes:['change','not-a-real-event'],
+    limit:500
+  });
+
+  assert.equal(seen.params[0], 'owner@example.com');
+  assert.equal(seen.params[1], 'north-star-beans');
+  assert.deepEqual(seen.params[4], ['change']);
+  assert.equal(seen.params[5], 200);
+});
+
+test('Phase 6.49 requesting all audit event types uses the unfiltered event set', async () => {
+  let seen = null;
+  const repo = new PostgresManagementDataRepository({
+    async query(sql, params) { seen = { sql, params }; return { rows:[] }; }
+  });
+  await repo.findBusinessAuditLog('owner@example.com', {
+    businessKey:'north-star-beans',
+    eventTypes:['registration','change','duplicate_resolution'],
+    limit:5
+  });
+
+  assert.equal(seen.params[4], null);
+  assert.equal(seen.params[5], 5);
 });
