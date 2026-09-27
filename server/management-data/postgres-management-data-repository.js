@@ -333,6 +333,14 @@ class PostgresManagementDataRepository {
     const eventTypeFilter = eventTypes.length && eventTypes.length < allowedEventTypes.size ? eventTypes : null;
     const requestedLimit = Number(query.limit);
     const limit = Number.isInteger(requestedLimit) && requestedLimit >= 1 && requestedLimit <= 50 ? requestedLimit : 200;
+    const auditStartDate = typeof query.auditStartDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(query.auditStartDate)
+      ? query.auditStartDate
+      : null;
+    const auditEndDate = typeof query.auditEndDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(query.auditEndDate)
+      ? query.auditEndDate
+      : null;
+    const safeAuditStartDate = auditStartDate && auditEndDate && auditStartDate <= auditEndDate ? auditStartDate : null;
+    const safeAuditEndDate = safeAuditStartDate ? auditEndDate : null;
     const result = await this.pool.query(
       `WITH registrations AS (
          SELECT 'registration'::TEXT AS event_type,
@@ -446,9 +454,11 @@ class PostgresManagementDataRepository {
            SELECT * FROM duplicate_resolutions
          ) AS audit_events
         WHERE ($5::text[] IS NULL OR event_type = ANY($5::text[]))
+          AND ($7::date IS NULL OR event_at >= ($7::date::timestamp AT TIME ZONE 'Asia/Tokyo'))
+          AND ($8::date IS NULL OR event_at < (($8::date + 1)::timestamp AT TIME ZONE 'Asia/Tokyo'))
         ORDER BY event_at DESC, event_type ASC, event_id DESC
         LIMIT $6`,
-      [ownerEmail.trim(), query.businessKey.trim(), dataDate, metricType, eventTypeFilter, limit]
+      [ownerEmail.trim(), query.businessKey.trim(), dataDate, metricType, eventTypeFilter, limit, safeAuditStartDate, safeAuditEndDate]
     );
     return result.rows || [];
   }
