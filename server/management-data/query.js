@@ -616,7 +616,7 @@ function managementDataAuditLogAnswer(entries, query = {}) {
     }
 
     if (row.event_type === 'duplicate_resolution') {
-      const keptId = String(row.kept_management_data_id ?? managementId || '不明');
+      const keptId = String(row.kept_management_data_id ?? (managementId || '不明'));
       const supersededIds = managementCleanupJsonArray(row.superseded_management_data_ids)
         .map(value => String(value))
         .filter(Boolean);
