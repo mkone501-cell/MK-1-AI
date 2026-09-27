@@ -573,7 +573,97 @@ function managementAuditLogEventTypes(text) {
   return filterSignal ? unique : null;
 }
 
-function detectManagementDataAuditLogQuery(message, history = []) {
+function managementAuditLogJapanDateParts(now = new Date()) {
+  const instant = now instanceof Date ? now : new Date(now);
+  if (Number.isNaN(instant.getTime())) return null;
+  const jst = new Date(instant.getTime() + 9 * 60 * 60 * 1000);
+  return {
+    year:jst.getUTCFullYear(),
+    month:jst.getUTCMonth() + 1,
+    day:jst.getUTCDate()
+  };
+}
+
+function managementAuditLogPeriod(text, now = new Date()) {
+  const value = String(text || '').replace(/[０-９]/g, char => String(char.charCodeAt(0) - 0xFF10));
+  const today = managementAuditLogJapanDateParts(now);
+  if (!today) return null;
+
+  const buildRange = (startDate, endDate, label) => {
+    if (!startDate || !endDate || startDate > endDate) return null;
+    return { startDate, endDate, label };
+  };
+
+  const jpRange = value.match(/(?:(20\d{2})年\s*)?(\d{1,2})月\s*(\d{1,2})日\s*(?:から|〜|～|~|－|-)\s*(?:(20\d{2})年\s*)?(?:(\d{1,2})月\s*)?(\d{1,2})日/);
+  if (jpRange) {
+    const startYear = jpRange[1] ? Number(jpRange[1]) : today.year;
+    const startMonth = Number(jpRange[2]);
+    const startDay = Number(jpRange[3]);
+    let endYear = jpRange[4] ? Number(jpRange[4]) : startYear;
+    const endMonth = jpRange[5] ? Number(jpRange[5]) : startMonth;
+    const endDay = Number(jpRange[6]);
+    if (!jpRange[4] && jpRange[5] && endMonth < startMonth) endYear += 1;
+    const startDate = validIsoDate(startYear, startMonth, startDay);
+    const endDate = validIsoDate(endYear, endMonth, endDay);
+    return buildRange(startDate, endDate, `${startYear}年${startMonth}月${startDay}日〜${endYear}年${endMonth}月${endDay}日`);
+  }
+
+  const isoRange = value.match(/(20\d{2})[-\/]([01]?\d)[-\/]([0-3]?\d)\s*(?:から|〜|～|~|－|-)\s*(20\d{2})[-\/]([01]?\d)[-\/]([0-3]?\d)/);
+  if (isoRange) {
+    const startDate = validIsoDate(Number(isoRange[1]), Number(isoRange[2]), Number(isoRange[3]));
+    const endDate = validIsoDate(Number(isoRange[4]), Number(isoRange[5]), Number(isoRange[6]));
+    return buildRange(startDate, endDate, `${startDate ? startDate.replace(/-/g, '/') : ''}〜${endDate ? endDate.replace(/-/g, '/') : ''}`);
+  }
+
+  if (/今月/.test(value)) {
+    const range = monthRange(today.year, today.month);
+    return range ? buildRange(range.startDate, range.endDate, range.label) : null;
+  }
+
+  if (/先月/.test(value)) {
+    let year = today.year;
+    let month = today.month - 1;
+    if (month < 1) {
+      year -= 1;
+      month = 12;
+    }
+    const range = monthRange(year, month);
+    return range ? buildRange(range.startDate, range.endDate, range.label) : null;
+  }
+
+  const explicitMonth = value.match(/(20\d{2})年\s*(\d{1,2})月(?!\s*\d{1,2}日)/);
+  if (explicitMonth) {
+    const range = monthRange(Number(explicitMonth[1]), Number(explicitMonth[2]));
+    return range ? buildRange(range.startDate, range.endDate, range.label) : null;
+  }
+
+  const monthOnly = value.match(/(\d{1,2})月(?!\s*\d{1,2}日)/);
+  if (monthOnly) {
+    const range = monthRange(today.year, Number(monthOnly[1]));
+    return range ? buildRange(range.startDate, range.endDate, range.label) : null;
+  }
+
+  const dayRange = value.match(/(?:^|[^\d月])(\d{1,2})日\s*(?:から|〜|～|~|－|-)\s*(\d{1,2})日/);
+  if (dayRange) {
+    const startDay = Number(dayRange[1]);
+    const endDay = Number(dayRange[2]);
+    const startDate = validIsoDate(today.year, today.month, startDay);
+    const endDate = validIsoDate(today.year, today.month, endDay);
+    return buildRange(startDate, endDate, `${today.year}年${today.month}月${startDay}日〜${today.year}年${today.month}月${endDay}日`);
+  }
+
+  const monthDay = value.match(/(?:^|[^\d年])(\d{1,2})月\s*(\d{1,2})日/);
+  if (monthDay) {
+    const month = Number(monthDay[1]);
+    const day = Number(monthDay[2]);
+    const date = validIsoDate(today.year, month, day);
+    return date ? buildRange(date, date, `${today.year}年${month}月${day}日`) : null;
+  }
+
+  return null;
+}
+
+function detectManagementDataAuditLogQuery(message, history = [], now = new Date()) {
   const text = String(message || '').trim();
   if (!text) return null;
 
@@ -582,6 +672,7 @@ function detectManagementDataAuditLogQuery(message, history = []) {
   const directMetricType = managementHistoryMetricType(text);
   const eventTypes = managementAuditLogEventTypes(text);
   const limit = managementAuditLogLimit(text);
+  const period = managementAuditLogPeriod(text, now);
 
   const recentTurns = Array.isArray(history) ? history.slice(-8) : [];
   let recentBusiness = null;
@@ -601,8 +692,8 @@ function detectManagementDataAuditLogQuery(message, history = []) {
 
   const filterFollowUp = !explicitAuditLog
     && hasRecentAuditLogContext
-    && Boolean(direct.dataDate || directMetricType || eventTypes || limit)
-    && /だけ|のみ|直近|最新|最後|絞|限定|登録|変更|更新|訂正|修正|復元|重複整理|売上|来客数|客数|客単価|経費|費用|利益|現金残高|預金残高/.test(text);
+    && Boolean(direct.dataDate || directMetricType || eventTypes || limit || period)
+    && /だけ|のみ|直近|最新|最後|絞|限定|登録|変更|更新|訂正|修正|復元|重複整理|売上|来客数|客数|客単価|経費|費用|利益|現金残高|預金残高|今月|先月|月|日|から|〜|～/.test(text);
   if (!explicitAuditLog && !filterFollowUp) return null;
 
   // A specifically worded duplicate-cleanup history question belongs to Phase 6.47,
@@ -615,9 +706,14 @@ function detectManagementDataAuditLogQuery(message, history = []) {
   if (!businessKey) return null;
   const query = {
     businessKey,
-    dataDate:direct.dataDate || null,
+    dataDate:period ? null : (direct.dataDate || null),
     metricType:directMetricType || null
   };
+  if (period) {
+    query.startDate = period.startDate;
+    query.endDate = period.endDate;
+    query.periodLabel = period.label;
+  }
   if (eventTypes) query.eventTypes = eventTypes;
   if (limit) query.limit = limit;
   return query;
@@ -627,14 +723,11 @@ function managementDataAuditLogAnswer(entries, query = {}) {
   const rows = (Array.isArray(entries) ? entries : []).filter(Boolean);
   const businessKey = query.businessKey || rows[0]?.business_key || null;
   const businessName = businessKey === 'north-star-beans' ? 'NORTH STAR BEANS' : businessKey || '対象事業';
-  if (!rows.length) {
-    return `${businessName}には、条件に一致する経営データの監査ログはありません。`;
-  }
-
-  const registrations = rows.filter(row => row.event_type === 'registration').length;
-  const changes = rows.filter(row => row.event_type === 'change').length;
-  const cleanups = rows.filter(row => row.event_type === 'duplicate_resolution').length;
   const filterLabels = [];
+  if (query.dataDate) filterLabels.push(`対象日: ${String(query.dataDate).replace(/-/g, '/')}`);
+  if (query.startDate && query.endDate) {
+    filterLabels.push(`対象期間: ${query.periodLabel || `${String(query.startDate).replace(/-/g, '/')}〜${String(query.endDate).replace(/-/g, '/')}`}`);
+  }
   if (query.metricType) filterLabels.push(managementAuditMetricLabel(query.metricType));
   if (Array.isArray(query.eventTypes) && query.eventTypes.length) {
     const names = { registration:'登録', change:'変更', duplicate_resolution:'重複整理' };
@@ -642,6 +735,13 @@ function managementDataAuditLogAnswer(entries, query = {}) {
   }
   if (Number.isInteger(query.limit)) filterLabels.push(`直近${query.limit}件`);
   const filterText = filterLabels.length ? `（絞り込み: ${filterLabels.join('、')}）` : '';
+  if (!rows.length) {
+    return `${businessName}には、条件に一致する経営データの監査ログはありません。${filterText}`;
+  }
+
+  const registrations = rows.filter(row => row.event_type === 'registration').length;
+  const changes = rows.filter(row => row.event_type === 'change').length;
+  const cleanups = rows.filter(row => row.event_type === 'duplicate_resolution').length;
   const lines = [
     `${businessName}の経営データ総合監査ログ${filterText}は${rows.length}件です（登録${registrations}件・変更${changes}件・重複整理${cleanups}件）。`
   ];
