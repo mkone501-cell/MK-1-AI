@@ -1166,7 +1166,7 @@ test('Phase 6.48 comprehensive audit-log lookup is owner/business scoped and rea
     metricType:'revenue'
   });
 
-  assert.deepEqual(seen.params, ['owner@example.com','north-star-beans','2026-09-22','revenue']);
+  assert.deepEqual(seen.params, ['owner@example.com','north-star-beans','2026-09-22','revenue',null,null,null,200]);
   assert.match(seen.sql, /FROM management_data AS current/);
   assert.match(seen.sql, /FROM management_data_history AS history/);
   assert.match(seen.sql, /FROM management_data_duplicate_resolution_history AS cleanup/);
@@ -1207,9 +1207,9 @@ test('Phase 6.49 audit-log repository applies event-type and latest-N filters sa
     limit:10
   });
 
-  assert.deepEqual(seen.params, ['owner@example.com','north-star-beans',null,'revenue',['change'],10]);
-  assert.match(seen.sql, /\$5::text\[\] IS NULL OR event_type = ANY\(\$5::text\[\]\)/);
-  assert.match(seen.sql, /LIMIT \$6/);
+  assert.deepEqual(seen.params, ['owner@example.com','north-star-beans',null,'revenue',null,null,['change'],10]);
+  assert.match(seen.sql, /\$7::text\[\] IS NULL OR event_type = ANY\(\$7::text\[\]\)/);
+  assert.match(seen.sql, /LIMIT \$8/);
   assert.doesNotMatch(seen.sql, /INSERT INTO/);
   assert.doesNotMatch(seen.sql, /UPDATE management_data/);
   assert.doesNotMatch(seen.sql, /DELETE FROM/);
@@ -1228,8 +1228,8 @@ test('Phase 6.49 audit-log repository ignores unsupported event types and unsafe
 
   assert.equal(seen.params[0], 'owner@example.com');
   assert.equal(seen.params[1], 'north-star-beans');
-  assert.deepEqual(seen.params[4], ['change']);
-  assert.equal(seen.params[5], 200);
+  assert.deepEqual(seen.params[6], ['change']);
+  assert.equal(seen.params[7], 200);
 });
 
 test('Phase 6.49 requesting all audit event types uses the unfiltered event set', async () => {
@@ -1243,6 +1243,69 @@ test('Phase 6.49 requesting all audit event types uses the unfiltered event set'
     limit:5
   });
 
+  assert.equal(seen.params[6], null);
+  assert.equal(seen.params[7], 5);
+});
+
+
+test('Phase 6.50 audit-log repository filters all event sources by target data-date range', async () => {
+  let seen = null;
+  const repo = new PostgresManagementDataRepository({
+    async query(sql, params) { seen = { sql, params }; return { rows:[] }; }
+  });
+  await repo.findBusinessAuditLog('owner@example.com', {
+    businessKey:'north-star-beans',
+    startDate:'2026-09-20',
+    endDate:'2026-09-27',
+    eventTypes:['change'],
+    limit:10
+  });
+
+  assert.deepEqual(
+    seen.params,
+    ['owner@example.com','north-star-beans',null,null,'2026-09-20','2026-09-27',['change'],10]
+  );
+  assert.match(seen.sql, /current\.data_date >= \$5::date/);
+  assert.match(seen.sql, /current\.data_date <= \$6::date/);
+  assert.match(seen.sql, /history\.data_date >= \$5::date/);
+  assert.match(seen.sql, /history\.data_date <= \$6::date/);
+  assert.match(seen.sql, /cleanup\.data_date >= \$5::date/);
+  assert.match(seen.sql, /cleanup\.data_date <= \$6::date/);
+  assert.match(seen.sql, /\$7::text\[\] IS NULL OR event_type = ANY\(\$7::text\[\]\)/);
+  assert.match(seen.sql, /LIMIT \$8/);
+  assert.doesNotMatch(seen.sql, /INSERT INTO/);
+  assert.doesNotMatch(seen.sql, /UPDATE management_data/);
+  assert.doesNotMatch(seen.sql, /DELETE FROM/);
+});
+
+test('Phase 6.50 exact audit date takes precedence over a supplied range', async () => {
+  let seen = null;
+  const repo = new PostgresManagementDataRepository({
+    async query(sql, params) { seen = { sql, params }; return { rows:[] }; }
+  });
+  await repo.findBusinessAuditLog('owner@example.com', {
+    businessKey:'north-star-beans',
+    dataDate:'2026-09-22',
+    startDate:'2026-09-01',
+    endDate:'2026-09-30'
+  });
+
+  assert.equal(seen.params[2], '2026-09-22');
   assert.equal(seen.params[4], null);
-  assert.equal(seen.params[5], 5);
+  assert.equal(seen.params[5], null);
+});
+
+test('Phase 6.50 invalid or reversed audit ranges are ignored safely', async () => {
+  let seen = null;
+  const repo = new PostgresManagementDataRepository({
+    async query(sql, params) { seen = { sql, params }; return { rows:[] }; }
+  });
+  await repo.findBusinessAuditLog('owner@example.com', {
+    businessKey:'north-star-beans',
+    startDate:'2026-09-30',
+    endDate:'2026-09-01'
+  });
+
+  assert.equal(seen.params[4], null);
+  assert.equal(seen.params[5], null);
 });
