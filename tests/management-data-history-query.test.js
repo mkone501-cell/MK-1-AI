@@ -3,6 +3,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
+  managementDataIdFromText,
+  recentUnambiguousManagementDataId,
+  detectManagementDataIdHistoryQuery,
+  managementDataIdHistoryAnswer,
   detectManagementDataHistoryQuery,
   detectManagementDataHistoryFollowUp,
   isInitialManagementDataRestorePhrase,
@@ -1465,4 +1469,144 @@ test('Phase 6.52 supports direct count questions without requiring prior audit c
     detectManagementDataAuditSummaryQuery('NORTH STAR BEANSの重複整理は何件？', []),
     { businessKey:'north-star-beans', dataDate:null, metricType:null, answerMode:'duplicate_resolution_count' }
   );
+});
+
+
+test('Phase 6.53 detects an explicit management-ID history request', () => {
+  assert.equal(managementDataIdFromText('その管理ID8の変更履歴を見せて'), '8');
+  assert.deepEqual(
+    detectManagementDataIdHistoryQuery('その管理ID8の変更履歴を見せて', []),
+    { managementDataId:'8', includeDetails:false }
+  );
+});
+
+test('Phase 6.53 accepts full-width management IDs', () => {
+  assert.equal(managementDataIdFromText('管理ID８の履歴を詳しく'), '8');
+  assert.deepEqual(
+    detectManagementDataIdHistoryQuery('管理ID８の履歴を詳しく', []),
+    { managementDataId:'8', includeDetails:true }
+  );
+});
+
+test('Phase 6.53 inherits one unambiguous management ID from the latest assistant answer', () => {
+  const history = [
+    { role:'user', content:'変更が一番多いデータはどれ？' },
+    { role:'assistant', content:'変更回数が最も多いのは、2026/08/15 売上（管理ID 8）で4回です。最終変更は2026/09/26 23:44です。' }
+  ];
+  assert.equal(recentUnambiguousManagementDataId(history), '8');
+  assert.deepEqual(
+    detectManagementDataIdHistoryQuery('その変更の前後の値を詳しく教えて', history),
+    { managementDataId:'8', includeDetails:true }
+  );
+});
+
+test('Phase 6.53 does not guess a management ID from an answer containing multiple IDs', () => {
+  const history = [
+    { role:'assistant', content:'管理ID 7を残し、管理ID 4を重複扱いにしました。' }
+  ];
+  assert.equal(recentUnambiguousManagementDataId(history), null);
+  assert.equal(
+    detectManagementDataIdHistoryQuery('その変更の前後の値を詳しく教えて', history),
+    null
+  );
+});
+
+test('Phase 6.53 does not turn a write-oriented management-ID instruction into a history lookup', () => {
+  assert.equal(
+    detectManagementDataIdHistoryQuery('管理ID8を残して重複整理して', []),
+    null
+  );
+});
+
+test('Phase 6.53 formats one management ID history chronologically with current value', () => {
+  const answer = managementDataIdHistoryAnswer([
+    {
+      management_data_id:'8',
+      business_key:'north-star-beans',
+      data_date:'2026-08-15',
+      metric_type:'revenue',
+      previous_amount:125000,
+      new_amount:126000,
+      previous_currency:'JPY',
+      new_currency:'JPY',
+      changed_at:'2026-09-26T12:39:00.000Z',
+      change_note:'2026年8月15日のNORTH STAR BEANSの売上は126000円です'
+    },
+    {
+      management_data_id:'8',
+      business_key:'north-star-beans',
+      data_date:'2026-08-15',
+      metric_type:'revenue',
+      previous_amount:126000,
+      new_amount:125000,
+      previous_currency:'JPY',
+      new_currency:'JPY',
+      changed_at:'2026-09-26T14:44:00.000Z',
+      change_note:'2026年8月15日のNORTH STAR BEANSの売上を最初の値に戻して'
+    }
+  ], {
+    id:'8',
+    business_key:'north-star-beans',
+    data_date:'2026-08-15',
+    metric_type:'revenue',
+    amount:125000,
+    currency:'JPY',
+    superseded_by_management_data_id:null
+  }, {
+    managementDataId:'8',
+    includeDetails:false
+  });
+
+  assert.match(answer, /管理ID 8（2026\/08\/15 NORTH STAR BEANS 売上）の変更履歴は2件/);
+  assert.match(answer, /125,000円 → 126,000円/);
+  assert.match(answer, /126,000円 → 125,000円/);
+  assert.match(answer, /現在の登録値は125,000円/);
+});
+
+test('Phase 6.53 detailed management-ID history includes recorded reason and original input', () => {
+  const answer = managementDataIdHistoryAnswer([
+    {
+      management_data_id:'8',
+      business_key:'north-star-beans',
+      data_date:'2026-08-15',
+      metric_type:'revenue',
+      previous_amount:125000,
+      new_amount:126000,
+      previous_currency:'JPY',
+      new_currency:'JPY',
+      changed_at:'2026-09-26T12:39:00.000Z',
+      change_note:'2026年8月15日のNORTH STAR BEANSの売上は126000円です'
+    }
+  ], {
+    id:'8',
+    business_key:'north-star-beans',
+    data_date:'2026-08-15',
+    metric_type:'revenue',
+    amount:126000,
+    currency:'JPY'
+  }, {
+    managementDataId:'8',
+    includeDetails:true
+  });
+
+  assert.match(answer, /変更理由：/);
+  assert.match(answer, /確認時の入力文：「2026年8月15日のNORTH STAR BEANSの売上は126000円です」/);
+});
+
+test('Phase 6.53 reports superseded status instead of pretending a duplicate row is current', () => {
+  const answer = managementDataIdHistoryAnswer([], {
+    id:'4',
+    business_key:'north-star-beans',
+    data_date:'2026-09-22',
+    metric_type:'revenue',
+    amount:160000,
+    currency:'JPY',
+    superseded_by_management_data_id:'7'
+  }, {
+    managementDataId:'4',
+    includeDetails:false
+  });
+
+  assert.match(answer, /保存されている変更履歴はありません/);
+  assert.match(answer, /現在は管理ID 7へ重複整理済み/);
 });
