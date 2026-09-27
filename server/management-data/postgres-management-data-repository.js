@@ -323,6 +323,15 @@ class PostgresManagementDataRepository {
     const dataDate = typeof query.dataDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(query.dataDate)
       ? query.dataDate
       : null;
+    const startDate = !dataDate && typeof query.startDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(query.startDate)
+      ? query.startDate
+      : null;
+    const endDate = !dataDate && typeof query.endDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(query.endDate)
+      ? query.endDate
+      : null;
+    const hasValidRange = Boolean(startDate && endDate && startDate <= endDate);
+    const rangeStart = hasValidRange ? startDate : null;
+    const rangeEnd = hasValidRange ? endDate : null;
     const metricType = typeof query.metricType === 'string' && METRIC_TYPES.has(query.metricType)
       ? query.metricType
       : null;
@@ -372,6 +381,8 @@ class PostgresManagementDataRepository {
             AND current.confirmed_by_owner = TRUE
             AND ($3::date IS NULL OR current.data_date = $3::date)
             AND ($4::text IS NULL OR current.metric_type = $4)
+            AND ($5::date IS NULL OR current.data_date >= $5::date)
+            AND ($6::date IS NULL OR current.data_date <= $6::date)
        ),
        changes AS (
          SELECT 'change'::TEXT AS event_type,
@@ -406,6 +417,8 @@ class PostgresManagementDataRepository {
             AND current.confirmed_by_owner = TRUE
             AND ($3::date IS NULL OR history.data_date = $3::date)
             AND ($4::text IS NULL OR history.metric_type = $4)
+            AND ($5::date IS NULL OR history.data_date >= $5::date)
+            AND ($6::date IS NULL OR history.data_date <= $6::date)
        ),
        duplicate_resolutions AS (
          SELECT 'duplicate_resolution'::TEXT AS event_type,
@@ -436,6 +449,8 @@ class PostgresManagementDataRepository {
             AND cleanup.confirmed_by_owner = TRUE
             AND ($3::date IS NULL OR cleanup.data_date = $3::date)
             AND ($4::text IS NULL OR cleanup.metric_type = $4)
+            AND ($5::date IS NULL OR cleanup.data_date >= $5::date)
+            AND ($6::date IS NULL OR cleanup.data_date <= $6::date)
        )
        SELECT *
          FROM (
@@ -445,10 +460,10 @@ class PostgresManagementDataRepository {
            UNION ALL
            SELECT * FROM duplicate_resolutions
          ) AS audit_events
-        WHERE ($5::text[] IS NULL OR event_type = ANY($5::text[]))
+        WHERE ($7::text[] IS NULL OR event_type = ANY($7::text[]))
         ORDER BY event_at DESC, event_type ASC, event_id DESC
-        LIMIT $6`,
-      [ownerEmail.trim(), query.businessKey.trim(), dataDate, metricType, eventTypeFilter, limit]
+        LIMIT $8`,
+      [ownerEmail.trim(), query.businessKey.trim(), dataDate, metricType, rangeStart, rangeEnd, eventTypeFilter, limit]
     );
     return result.rows || [];
   }
