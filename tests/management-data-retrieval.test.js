@@ -1166,7 +1166,7 @@ test('Phase 6.48 comprehensive audit-log lookup is owner/business scoped and rea
     metricType:'revenue'
   });
 
-  assert.deepEqual(seen.params, ['owner@example.com','north-star-beans','2026-09-22','revenue']);
+  assert.deepEqual(seen.params, ['owner@example.com','north-star-beans','2026-09-22','revenue',null,200,null,null]);
   assert.match(seen.sql, /FROM management_data AS current/);
   assert.match(seen.sql, /FROM management_data_history AS history/);
   assert.match(seen.sql, /FROM management_data_duplicate_resolution_history AS cleanup/);
@@ -1207,7 +1207,7 @@ test('Phase 6.49 audit-log repository applies event-type and latest-N filters sa
     limit:10
   });
 
-  assert.deepEqual(seen.params, ['owner@example.com','north-star-beans',null,'revenue',['change'],10]);
+  assert.deepEqual(seen.params, ['owner@example.com','north-star-beans',null,'revenue',['change'],10,null,null]);
   assert.match(seen.sql, /\$5::text\[\] IS NULL OR event_type = ANY\(\$5::text\[\]\)/);
   assert.match(seen.sql, /LIMIT \$6/);
   assert.doesNotMatch(seen.sql, /INSERT INTO/);
