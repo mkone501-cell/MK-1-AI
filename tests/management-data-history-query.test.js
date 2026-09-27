@@ -1089,3 +1089,163 @@ test('Phase 6.49 audit answer identifies applied filters', () => {
   assert.match(answer, /絞り込み: 売上、変更、直近3件/);
   assert.match(answer, /登録0件・変更1件・重複整理0件/);
 });
+
+
+test('Phase 6.50 resolves 今月 and 先月 in Japan time', () => {
+  const now = new Date('2026-09-27T12:00:00.000Z');
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('NORTH STAR BEANSの今月の監査ログを教えて', [], now),
+    {
+      businessKey:'north-star-beans',
+      dataDate:null,
+      metricType:null,
+      startDate:'2026-09-01',
+      endDate:'2026-09-30',
+      periodLabel:'2026年9月'
+    }
+  );
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('NORTH STAR BEANSの先月の監査ログを教えて', [], now),
+    {
+      businessKey:'north-star-beans',
+      dataDate:null,
+      metricType:null,
+      startDate:'2026-08-01',
+      endDate:'2026-08-31',
+      periodLabel:'2026年8月'
+    }
+  );
+});
+
+test('Phase 6.50 resolves explicit and yearless month audit filters', () => {
+  const now = new Date('2026-09-27T12:00:00.000Z');
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('NORTH STAR BEANSの2026年8月の監査ログを教えて', [], now),
+    {
+      businessKey:'north-star-beans',
+      dataDate:null,
+      metricType:null,
+      startDate:'2026-08-01',
+      endDate:'2026-08-31',
+      periodLabel:'2026年8月'
+    }
+  );
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('NORTH STAR BEANSの9月の監査ログを教えて', [], now),
+    {
+      businessKey:'north-star-beans',
+      dataDate:null,
+      metricType:null,
+      startDate:'2026-09-01',
+      endDate:'2026-09-30',
+      periodLabel:'2026年9月'
+    }
+  );
+});
+
+test('Phase 6.50 resolves Japanese audit date ranges with inherited year and month', () => {
+  const now = new Date('2026-09-27T12:00:00.000Z');
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('NORTH STAR BEANSの2026年9月20日から27日の監査ログを教えて', [], now),
+    {
+      businessKey:'north-star-beans',
+      dataDate:null,
+      metricType:null,
+      startDate:'2026-09-20',
+      endDate:'2026-09-27',
+      periodLabel:'2026年9月20日〜2026年9月27日'
+    }
+  );
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('NORTH STAR BEANSの9月20日〜10月5日の監査ログを教えて', [], now),
+    {
+      businessKey:'north-star-beans',
+      dataDate:null,
+      metricType:null,
+      startDate:'2026-09-20',
+      endDate:'2026-10-05',
+      periodLabel:'2026年9月20日〜2026年10月5日'
+    }
+  );
+});
+
+test('Phase 6.50 supports month plus event-type follow-ups after an audit-log turn', () => {
+  const history = [
+    { role:'user', content:'NORTH STAR BEANSの経営データ総合監査ログを教えて' },
+    { role:'assistant', content:'NORTH STAR BEANSの経営データ総合監査ログは14件です。' }
+  ];
+  const now = new Date('2026-09-27T12:00:00.000Z');
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('9月の変更だけ見せて', history, now),
+    {
+      businessKey:'north-star-beans',
+      dataDate:null,
+      metricType:null,
+      startDate:'2026-09-01',
+      endDate:'2026-09-30',
+      periodLabel:'2026年9月',
+      eventTypes:['change']
+    }
+  );
+});
+
+test('Phase 6.50 supports current-month day-only ranges only inside audit context', () => {
+  const history = [
+    { role:'user', content:'NORTH STAR BEANSの経営データ総合監査ログを教えて' },
+    { role:'assistant', content:'NORTH STAR BEANSの経営データ総合監査ログは14件です。' }
+  ];
+  const now = new Date('2026-09-27T12:00:00.000Z');
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('20日から27日だけ', history, now),
+    {
+      businessKey:'north-star-beans',
+      dataDate:null,
+      metricType:null,
+      startDate:'2026-09-20',
+      endDate:'2026-09-27',
+      periodLabel:'2026年9月20日〜2026年9月27日'
+    }
+  );
+  assert.equal(detectManagementDataAuditLogQuery('20日から27日だけ', [], now), null);
+});
+
+test('Phase 6.50 keeps a fully specified single audit date as an exact-date filter', () => {
+  const now = new Date('2026-09-27T12:00:00.000Z');
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('2026年9月22日のNORTH STAR BEANSの売上の監査ログを教えて', [], now),
+    { businessKey:'north-star-beans', dataDate:'2026-09-22', metricType:'revenue' }
+  );
+});
+
+test('Phase 6.50 audit answer identifies target period alongside other filters', () => {
+  const answer = managementDataAuditLogAnswer([
+    {
+      event_type:'change', event_id:'2', management_data_id:'10',
+      business_key:'north-star-beans', data_date:'2026-09-22', metric_type:'revenue',
+      previous_amount:125000, new_amount:126000,
+      previous_currency:'JPY', new_currency:'JPY',
+      confirmed_by_owner:true, event_at:'2026-09-26T12:51:00.000Z'
+    }
+  ], {
+    businessKey:'north-star-beans',
+    startDate:'2026-09-20',
+    endDate:'2026-09-27',
+    periodLabel:'2026年9月20日〜2026年9月27日',
+    metricType:'revenue',
+    eventTypes:['change'],
+    limit:3
+  });
+  assert.match(answer, /対象期間: 2026年9月20日〜2026年9月27日/);
+  assert.match(answer, /売上、変更、直近3件/);
+});
+
+test('Phase 6.50 empty audit answer preserves the requested period for clarity', () => {
+  const answer = managementDataAuditLogAnswer([], {
+    businessKey:'north-star-beans',
+    startDate:'2026-09-01',
+    endDate:'2026-09-30',
+    periodLabel:'2026年9月'
+  });
+  assert.match(answer, /条件に一致する経営データの監査ログはありません/);
+  assert.match(answer, /対象期間: 2026年9月/);
+});
