@@ -543,7 +543,8 @@ function detectManagementDataAuditLogQuery(message, history = []) {
   const explicitAuditLog = /(?:総合)?監査ログ/.test(text)
     || /経営(?:データ|数値)[^。！？\n]{0,30}(?:操作履歴|監査履歴)/.test(text)
     || /(?:登録|変更|更新|訂正|修正|復元)[^。！？\n]{0,30}(?:整理|重複)[^。！？\n]{0,30}(?:履歴|まとめ|一覧)/.test(text)
-    || /(?:いつ|誰|だれ)[^。！？\n]{0,40}(?:変更|更新|整理)[^。！？\n]{0,40}(?:履歴|ログ|一覧|まとめ)/.test(text);
+    || /(?:いつ|誰|だれ)[^。！？\n]{0,40}(?:変更|更新|整理)[^。！？\n]{0,40}(?:履歴|ログ|一覧|まとめ)/.test(text)
+    || /(?:いつ|何を|なにを|誰|だれ)[^。！？\n]{0,60}(?:変更|更新|整理)[^。！？\n]{0,30}(?:した|された|行った|実行した)/.test(text);
   if (!explicitAuditLog) return null;
 
   // A specifically worded duplicate-cleanup history question belongs to Phase 6.47.
