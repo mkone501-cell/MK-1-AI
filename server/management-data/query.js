@@ -622,6 +622,120 @@ function managementAuditLogPeriod(text, now = new Date()) {
   return null;
 }
 
+function managementAuditSummaryExplicitIntent(text) {
+  const value = String(text || '');
+  return /(?:監査ログ|操作履歴|監査履歴)[^。！？\n]{0,40}(?:要約|集計|サマリー|まとめ|件数|回数|多い|最多)/.test(value)
+    || /(?:要約|集計|サマリー)[^。！？\n]{0,40}(?:監査|履歴|登録|変更|更新|重複整理)/.test(value)
+    || /(?:何回|何件)[^。！？\n]{0,30}(?:変更|更新|登録|重複整理|整理)/.test(value)
+    || /(?:変更|更新)[^。！？\n]{0,30}(?:回数|件数|多い|最多|一番多い)/.test(value)
+    || /(?:誰|だれ)[^。！？\n]{0,20}(?:操作した|操作して|操作をした)/.test(value);
+}
+
+function detectManagementDataAuditSummaryQuery(message, history = [], now = new Date()) {
+  const text = String(message || '').trim();
+  if (!text) return null;
+
+  const explicitSummary = managementAuditSummaryExplicitIntent(text);
+  const direct = parseBusinessAndDate(text);
+  const directMetricType = managementHistoryMetricType(text);
+  const eventTypes = managementAuditLogEventTypes(text);
+  const auditPeriod = managementAuditLogPeriod(text, now);
+
+  const recentTurns = Array.isArray(history) ? history.slice(-8) : [];
+  let recentBusiness = null;
+  let hasRecentAuditContext = false;
+  for (let index = recentTurns.length - 1; index >= 0; index--) {
+    const turn = recentTurns[index];
+    if (!turn || turn.role !== 'user') continue;
+    const turnText = String(turn.content || '');
+    if (!hasRecentAuditContext
+        && (managementAuditLogExplicitIntent(turnText) || managementAuditSummaryExplicitIntent(turnText))) {
+      hasRecentAuditContext = true;
+    }
+    if (!recentBusiness) recentBusiness = parseBusinessAndDate(turnText).businessKey;
+    if (hasRecentAuditContext && recentBusiness) break;
+  }
+
+  const summaryFollowUp = !explicitSummary
+    && hasRecentAuditContext
+    && /(?:要約|集計|サマリー|何回|何件|変更回数|更新回数|多い|最多|一番多い|誰が操作|だれが操作)/.test(text);
+  if (!explicitSummary && !summaryFollowUp) return null;
+
+  const businessKey = direct.businessKey || recentBusiness;
+  if (!businessKey) return null;
+
+  const query = {
+    businessKey,
+    dataDate:auditPeriod ? null : (direct.dataDate || null),
+    metricType:directMetricType || null
+  };
+  if (eventTypes) query.eventTypes = eventTypes;
+  if (auditPeriod) {
+    query.auditStartDate = auditPeriod.startDate;
+    query.auditEndDate = auditPeriod.endDate;
+    query.auditPeriodLabel = auditPeriod.label;
+  }
+  return query;
+}
+
+function managementDataAuditSummaryAnswer(summary, query = {}) {
+  const row = summary && typeof summary === 'object' ? summary : null;
+  const businessKey = query.businessKey || null;
+  const businessName = businessKey === 'north-star-beans' ? 'NORTH STAR BEANS' : businessKey || '対象事業';
+  const total = Number(row?.total_count || 0);
+  if (!row || total === 0) {
+    return `${businessName}には、条件に一致する経営データの監査イベントはありません。`;
+  }
+
+  const registrations = Number(row.registration_count || 0);
+  const changes = Number(row.change_count || 0);
+  const cleanups = Number(row.duplicate_resolution_count || 0);
+  const ownerConfirmed = Number(row.owner_confirmed_count || 0);
+  const managementDataCount = Number(row.management_data_count || 0);
+  const filterLabels = [];
+  if (query.auditPeriodLabel) filterLabels.push(query.auditPeriodLabel);
+  if (query.metricType) filterLabels.push(managementAuditMetricLabel(query.metricType));
+  if (Array.isArray(query.eventTypes) && query.eventTypes.length) {
+    const names = { registration:'登録', change:'変更', duplicate_resolution:'重複整理' };
+    filterLabels.push(query.eventTypes.map(type => names[type] || type).join('・'));
+  }
+  const filterText = filterLabels.length ? `（絞り込み: ${filterLabels.join('、')}）` : '';
+
+  const lines = [
+    `${businessName}の経営データ監査サマリー${filterText}です。`,
+    `監査イベントは合計${total}件です（登録${registrations}件・変更${changes}件・重複整理${cleanups}件）。`,
+    `対象となった管理データは${managementDataCount}件、変更操作は${changes}回です。`
+  ];
+
+  if (ownerConfirmed === total) {
+    lines.push(`確認者情報は${total}件すべてオーナー本人確認済みです。現行の監査データは実際の端末操作者を別IDでは保存していないため、確認者より細かい人物判定はできません。`);
+  } else {
+    lines.push(`オーナー本人確認済みの監査イベントは${ownerConfirmed}件です。操作者IDは別項目では保存していません。`);
+  }
+
+  const topChanges = managementCleanupJsonArray(row.top_changes);
+  if (topChanges.length) {
+    lines.push('変更回数が多い管理データ:');
+    for (const [index, item] of topChanges.slice(0, 5).entries()) {
+      const id = String(item?.management_data_id ?? '不明');
+      const dateLabel = managementAuditDateLabel(item?.data_date);
+      const metricName = managementAuditMetricLabel(item?.metric_type);
+      const count = Number(item?.change_count || 0);
+      const lastChanged = formatManagementHistoryChangedAt(item?.last_changed_at);
+      lines.push(`${index + 1}. ${dateLabel} ${metricName}（管理ID ${id}）：${count}回${lastChanged ? `、最終変更 ${lastChanged}` : ''}`);
+    }
+  } else {
+    lines.push('条件内の変更履歴は0回です。');
+  }
+
+  const firstEvent = formatManagementHistoryChangedAt(row.first_event_at);
+  const lastEvent = formatManagementHistoryChangedAt(row.last_event_at);
+  if (firstEvent || lastEvent) {
+    lines.push(`操作期間: ${firstEvent || '不明'}〜${lastEvent || '不明'}。`);
+  }
+  return lines.join('\n');
+}
+
 function detectManagementDataAuditLogQuery(message, history = [], now = new Date()) {
   const text = String(message || '').trim();
   if (!text) return null;
