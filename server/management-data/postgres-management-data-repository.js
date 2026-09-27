@@ -463,6 +463,129 @@ class PostgresManagementDataRepository {
     return result.rows || [];
   }
 
+  async findBusinessAuditSummary(ownerEmail, query) {
+    if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
+    if (!query?.businessKey || typeof query.businessKey !== 'string' || !query.businessKey.trim()) return null;
+    const dataDate = typeof query.dataDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(query.dataDate)
+      ? query.dataDate
+      : null;
+    const metricType = typeof query.metricType === 'string' && METRIC_TYPES.has(query.metricType)
+      ? query.metricType
+      : null;
+    const allowedEventTypes = new Set(['registration', 'change', 'duplicate_resolution']);
+    const eventTypes = Array.isArray(query.eventTypes)
+      ? [...new Set(query.eventTypes.filter(type => allowedEventTypes.has(type)))]
+      : [];
+    const eventTypeFilter = eventTypes.length && eventTypes.length < allowedEventTypes.size ? eventTypes : null;
+    const auditStartDate = typeof query.auditStartDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(query.auditStartDate)
+      ? query.auditStartDate
+      : null;
+    const auditEndDate = typeof query.auditEndDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(query.auditEndDate)
+      ? query.auditEndDate
+      : null;
+    const safeAuditStartDate = auditStartDate && auditEndDate && auditStartDate <= auditEndDate ? auditStartDate : null;
+    const safeAuditEndDate = safeAuditStartDate ? auditEndDate : null;
+    const result = await this.pool.query(
+      `WITH audit_events AS (
+         SELECT 'registration'::TEXT AS event_type,
+                current.id::BIGINT AS management_data_id,
+                current.data_date,
+                current.metric_type,
+                current.confirmed_by_owner,
+                current.created_at AS event_at
+           FROM management_data AS current
+          WHERE current.owner_email = $1
+            AND current.business_key = $2
+            AND current.confirmed_by_owner = TRUE
+         UNION ALL
+         SELECT 'change'::TEXT AS event_type,
+                history.management_data_id::BIGINT AS management_data_id,
+                history.data_date,
+                history.metric_type,
+                history.confirmed_by_owner,
+                history.changed_at AS event_at
+           FROM management_data_history AS history
+           JOIN management_data AS current
+             ON current.id = history.management_data_id
+            AND current.owner_email = history.owner_email
+          WHERE history.owner_email = $1
+            AND history.business_key = $2
+            AND history.confirmed_by_owner = TRUE
+            AND current.confirmed_by_owner = TRUE
+         UNION ALL
+         SELECT 'duplicate_resolution'::TEXT AS event_type,
+                cleanup.kept_management_data_id::BIGINT AS management_data_id,
+                cleanup.data_date,
+                cleanup.metric_type,
+                cleanup.confirmed_by_owner,
+                cleanup.resolved_at AS event_at
+           FROM management_data_duplicate_resolution_history AS cleanup
+          WHERE cleanup.owner_email = $1
+            AND cleanup.business_key = $2
+            AND cleanup.confirmed_by_owner = TRUE
+       ),
+       filtered AS (
+         SELECT *
+           FROM audit_events
+          WHERE ($3::date IS NULL OR data_date = $3::date)
+            AND ($4::text IS NULL OR metric_type = $4)
+            AND ($5::text[] IS NULL OR event_type = ANY($5::text[]))
+            AND ($6::date IS NULL OR event_at >= ($6::date::timestamp AT TIME ZONE 'Asia/Tokyo'))
+            AND ($7::date IS NULL OR event_at < (($7::date + 1)::timestamp AT TIME ZONE 'Asia/Tokyo'))
+       ),
+       change_counts AS (
+         SELECT management_data_id,
+                data_date,
+                metric_type,
+                COUNT(*)::INT AS change_count,
+                MAX(event_at) AS last_changed_at
+           FROM filtered
+          WHERE event_type = 'change'
+          GROUP BY management_data_id, data_date, metric_type
+          ORDER BY change_count DESC, last_changed_at DESC, management_data_id DESC
+          LIMIT 5
+       ),
+       top_changes AS (
+         SELECT COALESCE(
+                  jsonb_agg(
+                    jsonb_build_object(
+                      'management_data_id', management_data_id,
+                      'data_date', data_date,
+                      'metric_type', metric_type,
+                      'change_count', change_count,
+                      'last_changed_at', last_changed_at
+                    )
+                    ORDER BY change_count DESC, last_changed_at DESC, management_data_id DESC
+                  ),
+                  '[]'::jsonb
+                ) AS items
+           FROM change_counts
+       )
+       SELECT COUNT(*)::INT AS total_count,
+              COUNT(*) FILTER (WHERE event_type = 'registration')::INT AS registration_count,
+              COUNT(*) FILTER (WHERE event_type = 'change')::INT AS change_count,
+              COUNT(*) FILTER (WHERE event_type = 'duplicate_resolution')::INT AS duplicate_resolution_count,
+              COUNT(*) FILTER (WHERE confirmed_by_owner = TRUE)::INT AS owner_confirmed_count,
+              COUNT(DISTINCT management_data_id)::INT AS management_data_count,
+              MIN(event_at) AS first_event_at,
+              MAX(event_at) AS last_event_at,
+              top_changes.items AS top_changes
+         FROM filtered
+         CROSS JOIN top_changes
+        GROUP BY top_changes.items`,
+      [
+        ownerEmail.trim(),
+        query.businessKey.trim(),
+        dataDate,
+        metricType,
+        eventTypeFilter,
+        safeAuditStartDate,
+        safeAuditEndDate
+      ]
+    );
+    return result.rows?.[0] || null;
+  }
+
   async findRange(ownerEmail, query) {
     if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
     if (!query?.businessKey || !query?.startDate || !query?.endDate) return [];
