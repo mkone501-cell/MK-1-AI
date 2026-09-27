@@ -62,7 +62,7 @@ function detectHistoryPointRestoreRequest(message, history = []) {
   const concrete = selectors.filter(selector => selector.type !== 'ambiguousAmount');
   const explicitId = managementDataIdFromText(text);
   const managementDataId = explicitId || recentManagementDataId(history);
-  if (!managementDataId) return { managementDataId:null, selector:null, error:'managementDataIdRequired' };
+  if (!managementDataId) return { managementDataId:null, selector:concrete.length === 1 ? concrete[0] : null, error:'managementDataIdRequired' };
   if (selectors.some(selector => selector.type === 'ambiguousAmount') || concrete.length !== 1) {
     return { managementDataId, selector:null, error:'historyPointRequired' };
   }
