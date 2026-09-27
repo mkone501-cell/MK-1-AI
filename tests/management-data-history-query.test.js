@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const {
   managementDataIdFromText,
   recentUnambiguousManagementDataId,
+  managementDataIdHistorySelection,
   detectManagementDataIdHistoryQuery,
   managementDataIdHistoryAnswer,
   detectManagementDataHistoryQuery,
@@ -1609,4 +1610,165 @@ test('Phase 6.53 reports superseded status instead of pretending a duplicate row
 
   assert.match(answer, /保存されている変更履歴はありません/);
   assert.match(answer, /現在は管理ID 7へ重複整理済み/);
+});
+
+
+test('Phase 6.54 parses first, last and ordinal change selectors', () => {
+  assert.deepEqual(managementDataIdHistorySelection('最初の変更だけ見せて'), { type:'first' });
+  assert.deepEqual(managementDataIdHistorySelection('最後の変更を詳しく'), { type:'last' });
+  assert.deepEqual(managementDataIdHistorySelection('2回目の変更の前後の値'), { type:'ordinal', index:2 });
+  assert.deepEqual(managementDataIdHistorySelection('３件目の更新'), { type:'ordinal', index:3 });
+});
+
+test('Phase 6.54 inherits the recent management ID for a focused last-change follow-up', () => {
+  const history = [
+    { role:'assistant', content:'管理ID 8（2026/08/15 NORTH STAR BEANS 売上）の変更履歴は4件です。' }
+  ];
+  assert.deepEqual(
+    detectManagementDataIdHistoryQuery('最後の変更だけ詳しく教えて', history),
+    {
+      managementDataId:'8',
+      includeDetails:true,
+      changeSelection:{ type:'last' }
+    }
+  );
+});
+
+test('Phase 6.54 supports an explicit management ID with an ordinal change selector', () => {
+  assert.deepEqual(
+    detectManagementDataIdHistoryQuery('管理ID8の2回目の変更の前後の値を詳しく教えて', []),
+    {
+      managementDataId:'8',
+      includeDetails:true,
+      changeSelection:{ type:'ordinal', index:2 }
+    }
+  );
+});
+
+test('Phase 6.54 does not guess a focused change when recent management IDs are ambiguous', () => {
+  const history = [
+    { role:'assistant', content:'管理ID 7を残し、管理ID 4を重複扱いにしました。' }
+  ];
+  assert.equal(
+    detectManagementDataIdHistoryQuery('最後の変更だけ詳しく教えて', history),
+    null
+  );
+});
+
+test('Phase 6.54 returns only the selected last change with its original ordinal', () => {
+  const answer = managementDataIdHistoryAnswer([
+    {
+      management_data_id:'8',
+      business_key:'north-star-beans',
+      data_date:'2026-08-15',
+      metric_type:'revenue',
+      previous_amount:125000,
+      new_amount:126000,
+      previous_currency:'JPY',
+      new_currency:'JPY',
+      changed_at:'2026-09-26T12:39:00.000Z',
+      change_note:'first change'
+    },
+    {
+      management_data_id:'8',
+      business_key:'north-star-beans',
+      data_date:'2026-08-15',
+      metric_type:'revenue',
+      previous_amount:126000,
+      new_amount:125000,
+      previous_currency:'JPY',
+      new_currency:'JPY',
+      changed_at:'2026-09-26T14:44:00.000Z',
+      change_note:'last change'
+    }
+  ], {
+    id:'8',
+    business_key:'north-star-beans',
+    data_date:'2026-08-15',
+    metric_type:'revenue',
+    amount:125000,
+    currency:'JPY'
+  }, {
+    managementDataId:'8',
+    includeDetails:true,
+    changeSelection:{ type:'last' }
+  });
+
+  assert.match(answer, /2回目の変更を詳しく表示します/);
+  assert.match(answer, /2\. 2026\/09\/26 23:44：126,000円 → 125,000円/);
+  assert.match(answer, /確認時の入力文：「last change」/);
+  assert.doesNotMatch(answer, /1\. 2026\/09\/26/);
+});
+
+test('Phase 6.54 can show the first change only without repeating the full history', () => {
+  const entries = [
+    {
+      management_data_id:'8',
+      business_key:'north-star-beans',
+      data_date:'2026-08-15',
+      metric_type:'revenue',
+      previous_amount:125000,
+      new_amount:126000,
+      previous_currency:'JPY',
+      new_currency:'JPY',
+      changed_at:'2026-09-26T12:39:00.000Z'
+    },
+    {
+      management_data_id:'8',
+      business_key:'north-star-beans',
+      data_date:'2026-08-15',
+      metric_type:'revenue',
+      previous_amount:126000,
+      new_amount:125000,
+      previous_currency:'JPY',
+      new_currency:'JPY',
+      changed_at:'2026-09-26T14:44:00.000Z'
+    }
+  ];
+  const answer = managementDataIdHistoryAnswer(entries, {
+    id:'8',
+    business_key:'north-star-beans',
+    data_date:'2026-08-15',
+    metric_type:'revenue',
+    amount:125000,
+    currency:'JPY'
+  }, {
+    managementDataId:'8',
+    includeDetails:false,
+    changeSelection:{ type:'first' }
+  });
+
+  assert.match(answer, /1回目の変更です/);
+  assert.match(answer, /125,000円 → 126,000円/);
+  assert.doesNotMatch(answer, /126,000円 → 125,000円/);
+  assert.doesNotMatch(answer, /変更履歴は2件/);
+});
+
+test('Phase 6.54 gives a clear answer when the requested ordinal does not exist', () => {
+  const answer = managementDataIdHistoryAnswer([
+    {
+      management_data_id:'8',
+      business_key:'north-star-beans',
+      data_date:'2026-08-15',
+      metric_type:'revenue',
+      previous_amount:125000,
+      new_amount:126000,
+      previous_currency:'JPY',
+      new_currency:'JPY',
+      changed_at:'2026-09-26T12:39:00.000Z'
+    }
+  ], {
+    id:'8',
+    business_key:'north-star-beans',
+    data_date:'2026-08-15',
+    metric_type:'revenue',
+    amount:126000,
+    currency:'JPY'
+  }, {
+    managementDataId:'8',
+    includeDetails:false,
+    changeSelection:{ type:'ordinal', index:3 }
+  });
+
+  assert.equal(answer, '管理ID 8の変更履歴は1件なので、3回目の変更はありません。');
 });

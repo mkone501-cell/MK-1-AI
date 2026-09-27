@@ -193,23 +193,46 @@ function recentUnambiguousManagementDataId(history = []) {
   return null;
 }
 
+function managementDataIdHistorySelection(text) {
+  const value = String(text || '').replace(/[０-９]/g, char => String(char.charCodeAt(0) - 0xFF10));
+  const ordinal = value.match(/(\d{1,3})\s*(?:回目|件目)(?:の)?(?:変更|更新)?/);
+  if (ordinal) {
+    const index = Number(ordinal[1]);
+    if (Number.isInteger(index) && index >= 1 && index <= 100) {
+      return { type:'ordinal', index };
+    }
+  }
+  if (/(?:一番最後|最後|最新|直近)(?:の)?(?:変更|更新)/.test(value)) {
+    return { type:'last' };
+  }
+  if (/(?:一番最初|最初|初回)(?:の)?(?:変更|更新)/.test(value)) {
+    return { type:'first' };
+  }
+  return null;
+}
+
 function detectManagementDataIdHistoryQuery(message, history = []) {
   const text = String(message || '').trim();
   if (!text) return null;
 
   const explicitId = managementDataIdFromText(text);
-  const readOnlyHistoryIntent = /(?:変更履歴|更新履歴|訂正履歴|修正履歴|履歴|前後の値|変更前|変更後|何円から何円|どの値から|どの値に|変更内容|更新内容|いつ変更|詳しく|詳細)/.test(text);
+  const changeSelection = managementDataIdHistorySelection(text);
+  const readOnlyHistoryIntent = /(?:変更履歴|更新履歴|訂正履歴|修正履歴|履歴|前後の値|変更前|変更後|何円から何円|どの値から|どの値に|変更内容|更新内容|いつ変更|詳しく|詳細)/.test(text)
+    || Boolean(changeSelection);
   if (!readOnlyHistoryIntent) return null;
 
   const contextualReference = /(?:その|この|さっき|先ほど|今の|直前の|それ|あの)(?:管理\s*ID|変更|更新|データ|値|履歴)?/.test(text)
-    || /管理\s*ID/.test(text);
+    || /管理\s*ID/.test(text)
+    || Boolean(changeSelection);
   if (!explicitId && !contextualReference) return null;
 
   const managementDataId = explicitId || recentUnambiguousManagementDataId(history);
   if (!managementDataId) return null;
 
   const includeDetails = /詳しく|詳細|理由|なぜ|どうして|元の入力|入力文|入力内容|前後の値|変更前|変更後|何円から何円|どの値から|どの値に/.test(text);
-  return { managementDataId, includeDetails };
+  const query = { managementDataId, includeDetails };
+  if (changeSelection) query.changeSelection = changeSelection;
+  return query;
 }
 
 function managementDataIdHistoryAnswer(entries, currentEntry, query = {}) {
@@ -237,11 +260,29 @@ function managementDataIdHistoryAnswer(entries, currentEntry, query = {}) {
     return `管理ID ${managementDataId}（${dateLabel} ${businessName} ${metricName}）には保存されている変更履歴はありません。${status}`.trim();
   }
 
-  const lines = rows.map((row, index) => {
+  let selectedRows = rows;
+  let selectedOrdinal = null;
+  if (query.changeSelection?.type === 'first') {
+    selectedRows = [rows[0]];
+    selectedOrdinal = 1;
+  } else if (query.changeSelection?.type === 'last') {
+    selectedRows = [rows[rows.length - 1]];
+    selectedOrdinal = rows.length;
+  } else if (query.changeSelection?.type === 'ordinal') {
+    const requested = Number(query.changeSelection.index);
+    if (!Number.isInteger(requested) || requested < 1 || requested > rows.length) {
+      return `管理ID ${managementDataId}の変更履歴は${rows.length}件なので、${requested || '指定された'}回目の変更はありません。`;
+    }
+    selectedRows = [rows[requested - 1]];
+    selectedOrdinal = requested;
+  }
+
+  const lines = selectedRows.map((row, index) => {
     const before = formatManagementHistoryValue(row.previous_amount, row.previous_currency) || '不明';
     const after = formatManagementHistoryValue(row.new_amount, row.new_currency) || '不明';
     const changedAt = formatManagementHistoryChangedAt(row.changed_at);
-    const base = `${index + 1}. ${changedAt ? `${changedAt}：` : ''}${before} → ${after}`;
+    const displayIndex = selectedOrdinal || (index + 1);
+    const base = `${displayIndex}. ${changedAt ? `${changedAt}：` : ''}${before} → ${after}`;
     if (!query.includeDetails) return base;
     const reason = managementHistoryReason(row);
     const originalInput = managementHistoryOriginalInput(row);
@@ -257,6 +298,11 @@ function managementDataIdHistoryAnswer(entries, currentEntry, query = {}) {
   const statusText = supersededBy
     ? `\n現在は管理ID ${supersededBy}へ重複整理済みです。`
     : currentValue ? `\n現在の登録値は${currentValue}です。` : '';
+
+  if (selectedOrdinal) {
+    const suffix = query.includeDetails ? 'を詳しく表示します。' : 'です。';
+    return `管理ID ${managementDataId}（${dateLabel} ${businessName} ${metricName}）の${selectedOrdinal}回目の変更${suffix}\n${lines.join('\n')}`;
+  }
 
   return `管理ID ${managementDataId}（${dateLabel} ${businessName} ${metricName}）の変更履歴は${rows.length}件です。\n${lines.join('\n')}${statusText}`;
 }
@@ -2085,4 +2131,4 @@ function scopeManagementAnalysisInputs({ query, history = [], knowledge = [], co
   return { history:safeHistory, knowledge:context ? [...safeKnowledge, context] : safeKnowledge };
 }
 
-module.exports = { managementDataIdFromText, recentUnambiguousManagementDataId, detectManagementDataIdHistoryQuery, managementDataIdHistoryAnswer, detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, detectManagementDataDuplicateResolutionRequest, managementDataDuplicateResolutionCandidates, managementDataDuplicateResolutionAnswer, detectManagementDataDuplicateResolutionHistoryQuery, managementDataDuplicateResolutionHistoryAnswer, managementAuditLogPeriod, managementAuditSummaryAnswerMode, detectManagementDataAuditSummaryQuery, managementDataAuditSummaryAnswer, detectManagementDataAuditLogQuery, managementDataAuditLogAnswer, detectManagementDataBusinessAuditQuery, managementDataBusinessAuditAnswer, detectManagementDataHistoryConsistencyQuery, managementDataHistoryConsistencyAnswer, managementDataHistoryAnswer, formatManagementHistoryValue, formatManagementHistoryChangedAt, detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
+module.exports = { managementDataIdFromText, recentUnambiguousManagementDataId, managementDataIdHistorySelection, detectManagementDataIdHistoryQuery, managementDataIdHistoryAnswer, detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, detectManagementDataDuplicateResolutionRequest, managementDataDuplicateResolutionCandidates, managementDataDuplicateResolutionAnswer, detectManagementDataDuplicateResolutionHistoryQuery, managementDataDuplicateResolutionHistoryAnswer, managementAuditLogPeriod, managementAuditSummaryAnswerMode, detectManagementDataAuditSummaryQuery, managementDataAuditSummaryAnswer, detectManagementDataAuditLogQuery, managementDataAuditLogAnswer, detectManagementDataBusinessAuditQuery, managementDataBusinessAuditAnswer, detectManagementDataHistoryConsistencyQuery, managementDataHistoryConsistencyAnswer, managementDataHistoryAnswer, formatManagementHistoryValue, formatManagementHistoryChangedAt, detectManagementDataQuery, detectManagementAnalysisFocus, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataComparisonMetrics, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataFocusedGroupComparisonMetrics, managementDataMissingPeriodNextInputs, managementDataPeriodContext, managementDataFocusedPeriodContext, managementDataPeriodAggregates, managementDataPeriodTrendMetrics, managementDataPeriodCompleteness, managementDataConsistencyChecks, managementDataAnalysisReadiness, managementDataNextRequiredInputs, scopeManagementAnalysisInputs, parseBusinessAndDates, parseBusinessAndMonths, parseBusinessAndMonthRange, parseBusinessAndYearMonths, parseBusinessAndYears, enumerateMonthRanges, enumerateYearRanges };
