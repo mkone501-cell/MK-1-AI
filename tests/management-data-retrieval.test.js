@@ -1121,3 +1121,35 @@ test('Phase 6.46 history lookups ignore histories belonging only to superseded r
   assert.match(seen.sql, /JOIN management_data AS current ON current.id = history.management_data_id/);
   assert.match(seen.sql, /current.superseded_by_management_data_id IS NULL/);
 });
+
+
+test('Phase 6.47 duplicate-resolution history lookup is owner/business scoped and can filter date/metric', async () => {
+  let seen = null;
+  const repo = new PostgresManagementDataRepository({
+    async query(sql, params) { seen = { sql, params }; return { rows:[] }; }
+  });
+  await repo.findDuplicateResolutionHistory('owner@example.com', {
+    businessKey:'north-star-beans',
+    dataDate:'2026-09-22',
+    metricType:'revenue'
+  });
+  assert.deepEqual(seen.params, ['owner@example.com','north-star-beans','2026-09-22','revenue']);
+  assert.match(seen.sql, /FROM management_data_duplicate_resolution_history/);
+  assert.match(seen.sql, /owner_email = \$1 AND business_key = \$2/);
+  assert.match(seen.sql, /\(\$3::date IS NULL OR data_date = \$3::date\)/);
+  assert.match(seen.sql, /\(\$4::text IS NULL OR metric_type = \$4\)/);
+  assert.match(seen.sql, /confirmed_by_owner = TRUE/);
+  assert.match(seen.sql, /ORDER BY resolved_at DESC, id DESC/);
+});
+
+test('Phase 6.47 duplicate-resolution history lookup never crosses owners', async () => {
+  let seen = null;
+  const repo = new PostgresManagementDataRepository({
+    async query(sql, params) { seen = { sql, params }; return { rows:[] }; }
+  });
+  await repo.findDuplicateResolutionHistory('owner-a@example.com', { businessKey:'north-star-beans' });
+  assert.equal(seen.params[0], 'owner-a@example.com');
+  assert.equal(seen.params[1], 'north-star-beans');
+  assert.equal(seen.params[2], null);
+  assert.equal(seen.params[3], null);
+});
