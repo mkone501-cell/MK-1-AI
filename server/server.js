@@ -404,7 +404,6 @@ function createApplication(options = {}) {
           return respondJson(req, res, 200, { managementData:restored, updated:true, historyRestored:true, sourceHistoryId:resolved.historyEntry.id });
         }
         if (requestedOperation === 'restore') {
-        if (requestedOperation === 'restore') {
           if (!isInitialManagementDataRestorePhrase(body.originalText)) {
             return respondJson(req, res, 409, { error:'復元の指示を安全に確認できません。もう一度変更履歴から復元を依頼してください。' });
           }
