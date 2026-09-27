@@ -326,6 +326,13 @@ class PostgresManagementDataRepository {
     const metricType = typeof query.metricType === 'string' && METRIC_TYPES.has(query.metricType)
       ? query.metricType
       : null;
+    const allowedEventTypes = new Set(['registration', 'change', 'duplicate_resolution']);
+    const eventTypes = Array.isArray(query.eventTypes)
+      ? [...new Set(query.eventTypes.filter(type => allowedEventTypes.has(type)))]
+      : [];
+    const eventTypeFilter = eventTypes.length && eventTypes.length < allowedEventTypes.size ? eventTypes : null;
+    const requestedLimit = Number(query.limit);
+    const limit = Number.isInteger(requestedLimit) && requestedLimit >= 1 && requestedLimit <= 50 ? requestedLimit : 200;
     const result = await this.pool.query(
       `WITH registrations AS (
          SELECT 'registration'::TEXT AS event_type,
@@ -438,9 +445,10 @@ class PostgresManagementDataRepository {
            UNION ALL
            SELECT * FROM duplicate_resolutions
          ) AS audit_events
+        WHERE ($5::text[] IS NULL OR event_type = ANY($5::text[]))
         ORDER BY event_at DESC, event_type ASC, event_id DESC
-        LIMIT 200`,
-      [ownerEmail.trim(), query.businessKey.trim(), dataDate, metricType]
+        LIMIT $6`,
+      [ownerEmail.trim(), query.businessKey.trim(), dataDate, metricType, eventTypeFilter, limit]
     );
     return result.rows || [];
   }
