@@ -109,7 +109,7 @@ test('Phase 6.46 resolves duplicate rows by superseding, never deleting', async 
   const repository = new PostgresManagementDataRepository({
     async query(sql, params) {
       captured = { sql, params };
-      return { rows:[{ keep_id:'7', superseded_count:1 }] };
+      return { rows:[{ keep_id:'7', superseded_count:1, history_id:'12', resolved_at:'2026-09-27T04:20:00.000Z' }] };
     }
   });
   const result = await repository.resolveDuplicateGroup('owner@example.com', {
@@ -123,10 +123,13 @@ test('Phase 6.46 resolves duplicate rows by superseding, never deleting', async 
     ]
   });
 
-  assert.deepEqual(result, { keepEntryId:'7', supersededCount:1 });
+  assert.deepEqual(result, { keepEntryId:'7', supersededCount:1, cleanupHistoryId:'12', resolvedAt:'2026-09-27T04:20:00.000Z' });
   assert.match(captured.sql, /FOR UPDATE/);
   assert.match(captured.sql, /superseded_by_management_data_id = valid.keep_id/);
   assert.match(captured.sql, /superseded_reason = 'owner confirmed duplicate resolution'/);
+  assert.match(captured.sql, /INSERT INTO management_data_duplicate_resolution_history/);
+  assert.match(captured.sql, /original_rows/);
+  assert.match(captured.sql, /confirmed_by_owner/);
   assert.doesNotMatch(captured.sql, /DELETE FROM management_data/i);
   assert.equal(captured.params[0], 'owner@example.com');
   assert.equal(captured.params[4], '7');
@@ -156,5 +159,21 @@ test('Phase 6.46 migration preserves duplicate rows and adds superseded metadata
   assert.match(sql, /ADD COLUMN IF NOT EXISTS superseded_by_management_data_id/);
   assert.match(sql, /ADD COLUMN IF NOT EXISTS superseded_at/);
   assert.match(sql, /ADD COLUMN IF NOT EXISTS superseded_reason/);
+  assert.doesNotMatch(sql, /DELETE FROM management_data/i);
+});
+
+
+test('Phase 6.47 duplicate-resolution history migration is append-only and backfills Phase 6.46 events', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const sql = fs.readFileSync(path.join(__dirname, '../db/migrations/008_create_management_data_duplicate_resolution_history.sql'), 'utf8');
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS management_data_duplicate_resolution_history/);
+  assert.match(sql, /kept_management_data_id BIGINT NOT NULL REFERENCES management_data\(id\)/);
+  assert.match(sql, /superseded_management_data_ids JSONB NOT NULL/);
+  assert.match(sql, /original_rows JSONB NOT NULL/);
+  assert.match(sql, /confirmed_by_owner BOOLEAN NOT NULL DEFAULT TRUE/);
+  assert.match(sql, /WITH legacy_groups AS/);
+  assert.match(sql, /superseded_reason = 'owner confirmed duplicate resolution'/);
+  assert.match(sql, /ON CONFLICT DO NOTHING/);
   assert.doesNotMatch(sql, /DELETE FROM management_data/i);
 });
