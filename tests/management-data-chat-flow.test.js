@@ -193,7 +193,7 @@ test('Phase 6.43 routes current-value and last-change questions to deterministic
   assert.match(source, /managementData\.findHistory\(auth\.ownerEmail, currentStateQuery\)/);
   assert.match(source, /managementData\.findExact\(auth\.ownerEmail, resolvedStateQuery\)/);
   assert.match(source, /managementDataCurrentStateAnswer\(currentStateEntry, stateHistoryEntries, resolvedStateQuery\)/);
-  assert.match(source, /duplicateResolutionQuery \|\| restoreQuery \|\| currentStateQuery \|\| businessAuditQuery \|\| consistencyQuery \? null/);
+  assert.match(source, /duplicateResolutionHistoryQuery \|\| duplicateResolutionQuery \|\| restoreQuery \|\| currentStateQuery \|\| businessAuditQuery \|\| consistencyQuery \? null/);
 });
 
 test('Phase 6.43 keeps current-state lookup owner-scoped and read-only', () => {
@@ -275,4 +275,25 @@ test('Phase 6.46 ordinary management reads ignore rows already superseded as dup
   assert.match(source, /superseded_by_management_data_id IS NULL/);
   assert.match(source, /superseded_reason = 'owner confirmed duplicate resolution'/);
   assert.doesNotMatch(source, /DELETE FROM management_data/i);
+});
+
+
+test('Phase 6.47 routes duplicate-resolution history through owner-scoped read-only storage', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  assert.match(source, /detectManagementDataDuplicateResolutionHistoryQuery\(message, history\)/);
+  assert.match(source, /managementData\.findDuplicateResolutionHistory\(auth\.ownerEmail, duplicateResolutionHistoryQuery\)/);
+  assert.match(source, /managementDataDuplicateResolutionHistoryAnswer\(/);
+});
+
+test('Phase 6.47 duplicate-resolution history owns the turn before new cleanup candidate routing', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  const historyStart = source.indexOf('const duplicateResolutionHistoryQuery =');
+  const cleanupStart = source.indexOf('const duplicateResolutionQuery =', historyStart);
+  assert.ok(historyStart >= 0 && cleanupStart > historyStart);
+  const block = source.slice(historyStart, cleanupStart);
+  assert.match(block, /managementDataCandidates = \[\]/);
+  assert.match(block, /managementDataCleanupCandidates = \[\]/);
+  assert.doesNotMatch(block, /managementData\.resolveDuplicateGroup\(/);
+  assert.doesNotMatch(block, /managementData\.update\(/);
+  assert.doesNotMatch(block, /managementData\.create\(/);
 });

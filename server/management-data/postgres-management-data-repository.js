@@ -251,19 +251,70 @@ class PostgresManagementDataRepository {
             AND current.superseded_by_management_data_id IS NULL
             AND current.id <> valid.keep_id
           RETURNING current.id
+       ),
+       audit AS (
+         INSERT INTO management_data_duplicate_resolution_history
+           (owner_email, business_key, data_date, metric_type,
+            kept_management_data_id, superseded_management_data_ids, original_rows,
+            confirmed_by_owner, resolution_note, resolved_at)
+         SELECT $1, $2, $3::date, $4, valid.keep_id,
+                jsonb_agg(resolved.id ORDER BY resolved.id),
+                $6::jsonb,
+                TRUE,
+                'owner confirmed duplicate resolution',
+                NOW()
+           FROM valid
+           JOIN resolved ON TRUE
+          GROUP BY valid.keep_id
+         HAVING COUNT(resolved.id) = (SELECT COUNT(*) - 1 FROM expected)
+         RETURNING id, kept_management_data_id, superseded_management_data_ids, resolved_at
        )
-       SELECT valid.keep_id, COUNT(resolved.id)::INT AS superseded_count
+       SELECT valid.keep_id,
+              COUNT(resolved.id)::INT AS superseded_count,
+              audit.id AS history_id,
+              audit.resolved_at
          FROM valid
-         LEFT JOIN resolved ON TRUE
-        GROUP BY valid.keep_id`,
+         JOIN resolved ON TRUE
+         JOIN audit ON audit.kept_management_data_id = valid.keep_id
+        GROUP BY valid.keep_id, audit.id, audit.resolved_at`,
       [
         ownerEmail.trim(), input.businessKey, input.dataDate, input.metricType,
         keepEntryId, JSON.stringify(normalized)
       ]
     );
     const row = result.rows?.[0] || null;
-    if (!row || Number(row.superseded_count) !== normalized.length - 1) return null;
-    return { keepEntryId:String(row.keep_id), supersededCount:Number(row.superseded_count) };
+    if (!row || Number(row.superseded_count) !== normalized.length - 1 || !row.history_id) return null;
+    return {
+      keepEntryId:String(row.keep_id),
+      supersededCount:Number(row.superseded_count),
+      cleanupHistoryId:String(row.history_id),
+      resolvedAt:row.resolved_at
+    };
+  }
+
+  async findDuplicateResolutionHistory(ownerEmail, query) {
+    if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
+    if (!query?.businessKey || typeof query.businessKey !== 'string' || !query.businessKey.trim()) return [];
+    const dataDate = typeof query.dataDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(query.dataDate)
+      ? query.dataDate
+      : null;
+    const metricType = typeof query.metricType === 'string' && METRIC_TYPES.has(query.metricType)
+      ? query.metricType
+      : null;
+    const result = await this.pool.query(
+      `SELECT id, owner_email, business_key, data_date, metric_type,
+              kept_management_data_id, superseded_management_data_ids, original_rows,
+              confirmed_by_owner, resolution_note, resolved_at
+         FROM management_data_duplicate_resolution_history
+        WHERE owner_email = $1 AND business_key = $2
+          AND ($3::date IS NULL OR data_date = $3::date)
+          AND ($4::text IS NULL OR metric_type = $4)
+          AND confirmed_by_owner = TRUE
+        ORDER BY resolved_at DESC, id DESC
+        LIMIT 100`,
+      [ownerEmail.trim(), query.businessKey.trim(), dataDate, metricType]
+    );
+    return result.rows || [];
   }
 
   async findRange(ownerEmail, query) {

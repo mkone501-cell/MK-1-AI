@@ -12,6 +12,8 @@ const {
   detectManagementDataDuplicateResolutionRequest,
   managementDataDuplicateResolutionCandidates,
   managementDataDuplicateResolutionAnswer,
+  detectManagementDataDuplicateResolutionHistoryQuery,
+  managementDataDuplicateResolutionHistoryAnswer,
   detectManagementDataBusinessAuditQuery,
   managementDataBusinessAuditAnswer,
   detectManagementDataHistoryConsistencyQuery,
@@ -794,4 +796,81 @@ test('Phase 6.46 duplicate cleanup answer says nothing has changed before confir
   assert.match(answer, /重複整理候補を2件/);
   assert.match(answer, /まだ何も変更していません/);
   assert.match(answer, /削除せず/);
+});
+
+
+test('Phase 6.47 detects an explicit duplicate-resolution history question', () => {
+  assert.deepEqual(
+    detectManagementDataDuplicateResolutionHistoryQuery('NORTH STAR BEANSの重複整理履歴を教えて', []),
+    { businessKey:'north-star-beans', dataDate:null, metricType:null }
+  );
+});
+
+test('Phase 6.47 can filter duplicate-resolution history by date and metric', () => {
+  assert.deepEqual(
+    detectManagementDataDuplicateResolutionHistoryQuery('2026年9月22日のNORTH STAR BEANSの売上の重複整理でどの管理IDを残した？', []),
+    { businessKey:'north-star-beans', dataDate:'2026-09-22', metricType:'revenue' }
+  );
+});
+
+test('Phase 6.47 inherits the recent business for a duplicate-resolution history follow-up', () => {
+  const history = [
+    { role:'user', content:'NORTH STAR BEANSの経営データ全体に不整合がないか確認して' },
+    { role:'assistant', content:'不整合は見つかりませんでした。' }
+  ];
+  assert.deepEqual(
+    detectManagementDataDuplicateResolutionHistoryQuery('さっきの重複整理履歴を教えて', history),
+    { businessKey:'north-star-beans', dataDate:null, metricType:null }
+  );
+});
+
+test('Phase 6.47 history question is not mistaken for a new duplicate cleanup request', () => {
+  const text = 'NORTH STAR BEANSの重複整理履歴を教えて';
+  assert.deepEqual(
+    detectManagementDataDuplicateResolutionHistoryQuery(text, []),
+    { businessKey:'north-star-beans', dataDate:null, metricType:null }
+  );
+  assert.equal(detectManagementDataDuplicateResolutionRequest(text, []), null);
+});
+
+test('Phase 6.47 formats who, when, kept IDs, excluded IDs and row snapshots', () => {
+  const answer = managementDataDuplicateResolutionHistoryAnswer([
+    {
+      business_key:'north-star-beans',
+      data_date:'2026-09-22',
+      metric_type:'revenue',
+      kept_management_data_id:'7',
+      superseded_management_data_ids:[4],
+      original_rows:[
+        { id:'4', amount:160000, currency:'JPY' },
+        { id:'7', amount:160000, currency:'JPY' }
+      ],
+      resolved_at:'2026-09-27T04:18:00.000Z'
+    },
+    {
+      business_key:'north-star-beans',
+      data_date:'2026-09-22',
+      metric_type:'customers',
+      kept_management_data_id:'5',
+      superseded_management_data_ids:[2,3],
+      original_rows:[
+        { id:'2', amount:80, currency:'COUNT' },
+        { id:'3', amount:80, currency:'COUNT' },
+        { id:'5', amount:80, currency:'COUNT' }
+      ],
+      resolved_at:'2026-09-27T04:19:00.000Z'
+    }
+  ], { businessKey:'north-star-beans' });
+
+  assert.match(answer, /重複整理履歴は2件/);
+  assert.match(answer, /管理ID 7を残し、管理ID 4を重複扱い/);
+  assert.match(answer, /管理ID 5を残し、管理ID 2・3を重複扱い/);
+  assert.match(answer, /確認者はオーナー本人/);
+  assert.match(answer, /管理ID 4=160,000円/);
+  assert.match(answer, /管理ID 5=80人/);
+});
+
+test('Phase 6.47 says clearly when no duplicate-resolution history exists', () => {
+  const answer = managementDataDuplicateResolutionHistoryAnswer([], { businessKey:'north-star-beans' });
+  assert.match(answer, /条件に一致する重複整理履歴はありません/);
 });
