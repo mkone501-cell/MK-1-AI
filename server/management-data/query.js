@@ -354,6 +354,9 @@ function detectManagementDataCurrentStateQuery(message, history = []) {
 function detectManagementDataDuplicateResolutionRequest(message, history = []) {
   const text = String(message || '').trim();
   if (!text || !/重複/.test(text) || !/(?:整理|解消|統合|候補|残す|残せ|どれ|まとめ)/.test(text)) return null;
+  const pastAuditQuestion = /履歴/.test(text)
+    || /(?:整理|解消|統合)[^。！？\n]{0,24}(?:いつ|何時|誰|だれ|残した|除外した|処理した)/.test(text);
+  if (pastAuditQuestion) return null;
 
   const directTarget = managementTargetFromExplicitMessage(text);
   const directBusiness = parseBusinessAndDate(text).businessKey;
