@@ -885,10 +885,15 @@ test('Phase 6.48 detects an explicit comprehensive management audit-log question
   );
 });
 
-test('Phase 6.48 recognizes a natural who-what-when management audit question', () => {
+test('Phase 6.49 recognizes event types in a natural who-what-when management audit question', () => {
   assert.deepEqual(
     detectManagementDataAuditLogQuery('NORTH STAR BEANSでは、いつ何を誰が変更・整理した？', []),
-    { businessKey:'north-star-beans', dataDate:null, metricType:null }
+    {
+      businessKey:'north-star-beans',
+      dataDate:null,
+      metricType:null,
+      eventTypes:['change','duplicate_resolution']
+    }
   );
 });
 
@@ -960,4 +965,127 @@ test('Phase 6.48 formats registration, change and duplicate cleanup in one timel
 test('Phase 6.48 says clearly when the comprehensive audit log is empty', () => {
   const answer = managementDataAuditLogAnswer([], { businessKey:'north-star-beans' });
   assert.match(answer, /条件に一致する経営データの監査ログはありません/);
+});
+
+
+test('Phase 6.49 filters a standalone audit log to registration events only', () => {
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('NORTH STAR BEANSの監査ログで登録だけ見せて', []),
+    {
+      businessKey:'north-star-beans',
+      dataDate:null,
+      metricType:null,
+      eventTypes:['registration']
+    }
+  );
+});
+
+test('Phase 6.49 filters a standalone audit log to change events only', () => {
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('NORTH STAR BEANSの監査ログで変更だけ見せて', []),
+    {
+      businessKey:'north-star-beans',
+      dataDate:null,
+      metricType:null,
+      eventTypes:['change']
+    }
+  );
+});
+
+test('Phase 6.49 filters a standalone audit log to duplicate cleanup only', () => {
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('NORTH STAR BEANSの監査ログで重複整理だけ見せて', []),
+    {
+      businessKey:'north-star-beans',
+      dataDate:null,
+      metricType:null,
+      eventTypes:['duplicate_resolution']
+    }
+  );
+});
+
+test('Phase 6.49 supports latest-N audit log limits and caps them at 50', () => {
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('NORTH STAR BEANSの監査ログを直近10件だけ見せて', []),
+    {
+      businessKey:'north-star-beans',
+      dataDate:null,
+      metricType:null,
+      limit:10
+    }
+  );
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('NORTH STAR BEANSの監査ログを最新999件見せて', []),
+    {
+      businessKey:'north-star-beans',
+      dataDate:null,
+      metricType:null,
+      limit:50
+    }
+  );
+});
+
+test('Phase 6.49 supports metric-only follow-ups after a recent audit-log turn', () => {
+  const history = [
+    { role:'user', content:'NORTH STAR BEANSの経営データ総合監査ログを教えて' },
+    { role:'assistant', content:'NORTH STAR BEANSの経営データ総合監査ログは14件です。' }
+  ];
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('売上だけ見せて', history),
+    {
+      businessKey:'north-star-beans',
+      dataDate:null,
+      metricType:'revenue'
+    }
+  );
+});
+
+test('Phase 6.49 supports event-type and latest-N follow-ups after a recent audit-log turn', () => {
+  const history = [
+    { role:'user', content:'NORTH STAR BEANSの経営データ総合監査ログを教えて' },
+    { role:'assistant', content:'NORTH STAR BEANSの経営データ総合監査ログは14件です。' }
+  ];
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('変更だけ直近3件', history),
+    {
+      businessKey:'north-star-beans',
+      dataDate:null,
+      metricType:null,
+      eventTypes:['change'],
+      limit:3
+    }
+  );
+  assert.deepEqual(
+    detectManagementDataAuditLogQuery('重複整理だけ見せて', history),
+    {
+      businessKey:'north-star-beans',
+      dataDate:null,
+      metricType:null,
+      eventTypes:['duplicate_resolution']
+    }
+  );
+});
+
+test('Phase 6.49 does not treat filter-only phrases as audit queries without audit context', () => {
+  assert.equal(detectManagementDataAuditLogQuery('売上だけ見せて', []), null);
+  assert.equal(detectManagementDataAuditLogQuery('変更だけ直近3件', []), null);
+});
+
+test('Phase 6.49 audit answer identifies applied filters', () => {
+  const answer = managementDataAuditLogAnswer([
+    {
+      event_type:'change', event_id:'2', management_data_id:'10',
+      business_key:'north-star-beans', data_date:'2026-08-15', metric_type:'revenue',
+      previous_amount:125000, new_amount:126000,
+      previous_currency:'JPY', new_currency:'JPY',
+      confirmed_by_owner:true, event_at:'2026-09-26T12:51:00.000Z'
+    }
+  ], {
+    businessKey:'north-star-beans',
+    metricType:'revenue',
+    eventTypes:['change'],
+    limit:3
+  });
+  assert.match(answer, /絞り込み: 売上、変更、直近3件/);
+  assert.match(answer, /登録0件・変更1件・重複整理0件/);
 });
