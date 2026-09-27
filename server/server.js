@@ -365,7 +365,7 @@ function createApplication(options = {}) {
           const expectedUpdatedAt = String(body.expectedUpdatedAt || '').trim();
           if (!request || !request.selector || !/^\d+$/.test(expectedEntryId) || !/^\d+$/.test(expectedHistoryId) ||
               !Number.isInteger(expectedHistoryIndex) || expectedHistoryIndex < 1 || !Number.isFinite(expectedAmount) ||
-              !expectedCurrency || !expectedUpdatedAt || String(request.managementDataId) !== expectedEntryId) {
+              !expectedCurrency || !expectedUpdatedAt || (request.managementDataId && String(request.managementDataId) !== expectedEntryId)) {
             return respondJson(req, res, 409, { error:'復元対象を安全に確認できません。管理IDの変更履歴から、もう一度復元候補を作成してください。' });
           }
           const [existing, entries] = await Promise.all([
