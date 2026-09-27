@@ -81,6 +81,48 @@ class PostgresManagementDataRepository {
     );
     return result.rows[0] || null;
   }
+  async findById(ownerEmail, managementDataId) {
+    if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
+    const id = String(managementDataId ?? '').trim();
+    if (!/^\d+$/.test(id)) return null;
+    const result = await this.pool.query(
+      `SELECT id, owner_email, business_key, data_date, metric_type, amount, currency, note, source,
+              confirmed_by_owner, created_at, updated_at,
+              superseded_by_management_data_id, superseded_at
+         FROM management_data
+        WHERE owner_email = $1 AND id = $2::BIGINT
+          AND confirmed_by_owner = TRUE
+        LIMIT 1`,
+      [ownerEmail.trim(), id]
+    );
+    return result.rows[0] || null;
+  }
+
+  async findHistoryByManagementDataId(ownerEmail, managementDataId) {
+    if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
+    const id = String(managementDataId ?? '').trim();
+    if (!/^\d+$/.test(id)) return [];
+    const result = await this.pool.query(
+      `SELECT history.id, history.management_data_id, history.owner_email, history.business_key,
+              history.data_date, history.metric_type, history.previous_amount, history.new_amount,
+              history.previous_currency, history.new_currency, history.source, history.change_note,
+              history.confirmed_by_owner, history.changed_at
+         FROM management_data_history AS history
+         JOIN management_data AS current
+           ON current.id = history.management_data_id
+          AND current.owner_email = history.owner_email
+        WHERE history.owner_email = $1
+          AND history.management_data_id = $2::BIGINT
+          AND history.confirmed_by_owner = TRUE
+          AND current.owner_email = $1
+          AND current.confirmed_by_owner = TRUE
+        ORDER BY history.changed_at ASC, history.id ASC
+        LIMIT 100`,
+      [ownerEmail.trim(), id]
+    );
+    return result.rows || [];
+  }
+
   async findExact(ownerEmail, query) {
     if (typeof ownerEmail !== 'string' || !ownerEmail.trim()) throw new Error('owner email is required');
     if (!query?.businessKey || !query?.dataDate || !query?.metricType) return null;
