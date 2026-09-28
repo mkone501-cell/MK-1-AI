@@ -21,7 +21,7 @@ const { proposeMemory } = require('./knowledge/update-candidates');
 const { detectManagementDataCandidate, detectManagementDataCandidates, isSameManagementDataValue, managementDataCandidateAcknowledgement } = require('./management-data/candidates');
 const { PostgresManagementDataRepository } = require('./management-data/postgres-management-data-repository');
 const { migrateManagementData } = require('./management-data/migrate-management-data');
-const { detectHistoryPointRestoreRequest, isHistoryPointRestoreIntent, isContextualHistoryRestorePhrase, resolveHistoryPoint, historyMinute } = require('./management-data/history-point-restore');
+const { detectHistoryPointRestoreRequest, isHistoryPointRestoreIntent, isContextualHistoryRestorePhrase, historyPointRestoreTargetSide, resolveHistoryPoint, historyMinute } = require('./management-data/history-point-restore');
 const { detectManagementDataIdHistoryQuery, managementDataIdHistoryAnswer, detectManagementDataHistoryQuery, detectManagementDataHistoryFollowUp, isInitialManagementDataRestorePhrase, detectManagementDataRestoreRequest, detectManagementDataCurrentStateQuery, managementDataCurrentStateAnswer, detectManagementDataDuplicateResolutionRequest, managementDataDuplicateResolutionCandidates, managementDataDuplicateResolutionAnswer, detectManagementDataDuplicateResolutionHistoryQuery, managementDataDuplicateResolutionHistoryAnswer, detectManagementDataAuditSummaryQuery, managementDataAuditSummaryAnswer, detectManagementDataAuditLogQuery, managementDataAuditLogAnswer, detectManagementDataBusinessAuditQuery, managementDataBusinessAuditAnswer, detectManagementDataHistoryConsistencyQuery, managementDataHistoryConsistencyAnswer, managementDataHistoryAnswer, detectManagementDataQuery, managementDataContext, managementDataSummaryContext, managementDataComparisonContext, managementDataMonthlyComparisonContext, managementDataAnnualComparisonContext, managementDataMultiMonthContext, managementDataMultiYearContext, managementDataFocusedMultiMonthContext, managementDataFocusedMultiYearContext, managementDataPeriodContext, managementDataFocusedPeriodContext, scopeManagementAnalysisInputs } = require('./management-data/query');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -361,11 +361,12 @@ function createApplication(options = {}) {
           const expectedEntryId = String(body.existingEntryId ?? '').trim();
           const expectedHistoryId = String(body.restoreHistoryEntryId ?? '').trim();
           const expectedHistoryIndex = Number(body.restoreHistoryIndex);
+          const expectedTargetSide = body.restoreTargetSide === 'previous' ? 'previous' : body.restoreTargetSide === undefined ? 'new' : null;
           const expectedAmount = Number(body.previousAmount);
           const expectedCurrency = String(body.previousCurrency || '').trim().toUpperCase();
           const expectedUpdatedAt = String(body.expectedUpdatedAt || '').trim();
           if (!isHistoryPointRestoreIntent(body.originalText) || !request || (!request.selector && !contextualRestore) || !/^\d+$/.test(expectedEntryId) || !/^\d+$/.test(expectedHistoryId) ||
-              !Number.isInteger(expectedHistoryIndex) || expectedHistoryIndex < 1 || !Number.isFinite(expectedAmount) ||
+              !Number.isInteger(expectedHistoryIndex) || expectedHistoryIndex < 1 || !expectedTargetSide || !Number.isFinite(expectedAmount) ||
               !expectedCurrency || !expectedUpdatedAt || (!contextualRestore && request.managementDataId && String(request.managementDataId) !== expectedEntryId)) {
             return respondJson(req, res, 409, { error:'復元対象を安全に確認できません。管理IDの変更履歴から、もう一度復元候補を作成してください。' });
           }
@@ -377,7 +378,11 @@ function createApplication(options = {}) {
             const suffix = existing?.superseded_by_management_data_id ? `この管理IDは管理ID ${existing.superseded_by_management_data_id}へ重複整理済みです。` : '';
             return respondJson(req, res, 409, { error:suffix || '復元対象を確認できません。管理IDの変更履歴を確認してください。' });
           }
-          const resolved = resolveHistoryPoint(entries, request.selector || { type:'index', index:expectedHistoryIndex });
+          const requestTargetSide = historyPointRestoreTargetSide(body.originalText);
+          if (requestTargetSide !== expectedTargetSide) {
+            return respondJson(req, res, 409, { error:'復元先の変更前／変更後を安全に確認できません。もう一度復元候補を作成してください。' });
+          }
+          const resolved = resolveHistoryPoint(entries, request.selector || { type:'index', index:expectedHistoryIndex }, expectedTargetSide);
           if (!resolved.historyEntry || String(resolved.historyEntry.id) !== expectedHistoryId ||
               resolved.historyIndex !== expectedHistoryIndex) {
             return respondJson(req, res, 409, { error:'指定した履歴が候補作成後に変わったか、一意に確認できません。変更履歴からもう一度指定してください。', code:'MANAGEMENT_DATA_HISTORY_RESTORE_STALE' });
@@ -399,7 +404,7 @@ function createApplication(options = {}) {
             currency:resolved.currency,
             confirmed:true,
             source:'owner confirmed history point restore',
-            note:`owner confirmed history point restore\nsource history id: ${resolved.historyEntry.id}`
+            note:`owner confirmed history point restore\nsource history id: ${resolved.historyEntry.id}\nsource history side: ${resolved.targetSide}`
           });
           if (!restored) return respondJson(req, res, 409, { error:'復元対象が候補作成後に変更されています。最新の変更履歴を確認してください。', code:'MANAGEMENT_DATA_HISTORY_RESTORE_STALE' });
           return respondJson(req, res, 200, { managementData:restored, updated:true, historyRestored:true, sourceHistoryId:resolved.historyEntry.id });
@@ -594,7 +599,7 @@ function createApplication(options = {}) {
                   } else if (currentEntry.superseded_by_management_data_id) {
                     managementDataDirectAnswer = `この管理IDは管理ID ${currentEntry.superseded_by_management_data_id}へ重複整理済みです。整理済みの管理IDは復元できません。`;
                   } else {
-                    const resolved = resolveHistoryPoint(historyEntries, historyPointRestoreQuery.selector);
+                    const resolved = resolveHistoryPoint(historyEntries, historyPointRestoreQuery.selector, historyPointRestoreQuery.targetSide);
                     if (!resolved.historyEntry) {
                       managementDataDirectAnswer = resolved.error === 'historyPointAmbiguous'
                         ? '同じ値または日時に一致する履歴が複数あります。履歴番号またはより正確な変更日時を指定してください。まだ何も変更していません。'
@@ -620,6 +625,7 @@ function createApplication(options = {}) {
                         expectedUpdatedAt:currentEntry.updated_at,
                         restoreHistoryEntryId:resolved.historyEntry.id,
                         restoreHistoryIndex:resolved.historyIndex,
+                        restoreTargetSide:resolved.targetSide,
                         restoreHistoryChangedAt:historyMinute(resolved.historyEntry.changed_at)
                       }];
                     }
