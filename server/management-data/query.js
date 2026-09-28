@@ -193,12 +193,38 @@ function recentUnambiguousManagementDataId(history = []) {
   return null;
 }
 
+function normalizedManagementHistoryText(message) {
+  return String(message || '').replace(/[０-９]/g, char => String(char.charCodeAt(0) - 0xFF10));
+}
+
+function managementHistorySelectionFromText(message) {
+  const text = normalizedManagementHistoryText(message);
+  if (/(?:一番最初|最初|初回)\s*(?:の)?\s*変更/.test(text)) return { type:'first' };
+  if (/(?:一番最後|最後|最新|直近)\s*(?:の)?\s*変更/.test(text)) return { type:'last' };
+  const match = text.match(/(\d+)\s*(?:回目|件目|番目)\s*(?:の)?\s*変更/);
+  if (!match) return null;
+  const index = Number(match[1]);
+  return Number.isInteger(index) && index > 0 ? { type:'index', index } : null;
+}
+
+function orderedManagementDataHistory(entries) {
+  return (Array.isArray(entries) ? entries : []).filter(Boolean).slice().sort((left, right) => {
+    const leftChangedAt = new Date(left.changed_at).getTime();
+    const rightChangedAt = new Date(right.changed_at).getTime();
+    if (leftChangedAt !== rightChangedAt) return leftChangedAt - rightChangedAt;
+    return Number(left.id) - Number(right.id);
+  });
+}
+
 function detectManagementDataIdHistoryQuery(message, history = []) {
   const text = String(message || '').trim();
   if (!text) return null;
+  if (/(?:戻して|戻す|復元して|復元する|戻したい|この値に戻す)/.test(text)) return null;
 
   const explicitId = managementDataIdFromText(text);
-  const readOnlyHistoryIntent = /(?:変更履歴|更新履歴|訂正履歴|修正履歴|履歴|前後の値|変更前|変更後|何円から何円|どの値から|どの値に|変更内容|更新内容|いつ変更|詳しく|詳細)/.test(text);
+  const selection = managementHistorySelectionFromText(text);
+  const readOnlyHistoryIntent = Boolean(selection)
+    || /(?:変更履歴|更新履歴|訂正履歴|修正履歴|履歴|前後の値|変更前|変更後|何円から何円|どの値から|どの値に|変更内容|更新内容|いつ変更|詳しく|詳細)/.test(text);
   if (!readOnlyHistoryIntent) return null;
 
   const contextualReference = /(?:その|この|さっき|先ほど|今の|直前の|それ|あの)(?:管理\s*ID|変更|更新|データ|値|履歴)?/.test(text)
@@ -209,11 +235,11 @@ function detectManagementDataIdHistoryQuery(message, history = []) {
   if (!managementDataId) return null;
 
   const includeDetails = /詳しく|詳細|理由|なぜ|どうして|元の入力|入力文|入力内容|前後の値|変更前|変更後|何円から何円|どの値から|どの値に/.test(text);
-  return { managementDataId, includeDetails };
+  return { managementDataId, includeDetails, ...(selection ? { selection } : {}) };
 }
 
 function managementDataIdHistoryAnswer(entries, currentEntry, query = {}) {
-  const rows = (Array.isArray(entries) ? entries : []).filter(Boolean);
+  const rows = orderedManagementDataHistory(entries);
   const managementDataId = String(query.managementDataId || currentEntry?.id || rows[0]?.management_data_id || '').trim();
   const businessKey = currentEntry?.business_key || rows[0]?.business_key || null;
   const businessName = businessKey === 'north-star-beans' ? 'NORTH STAR BEANS' : businessKey || '対象事業';
@@ -237,11 +263,20 @@ function managementDataIdHistoryAnswer(entries, currentEntry, query = {}) {
     return `管理ID ${managementDataId}（${dateLabel} ${businessName} ${metricName}）には保存されている変更履歴はありません。${status}`.trim();
   }
 
-  const lines = rows.map((row, index) => {
+  let selectedRows = rows.map((row, index) => ({ row, index:index + 1 }));
+  if (query.selection?.type === 'first') selectedRows = selectedRows.slice(0, 1);
+  if (query.selection?.type === 'last') selectedRows = selectedRows.slice(-1);
+  if (query.selection?.type === 'index') {
+    const selected = selectedRows[query.selection.index - 1];
+    if (!selected) return `管理ID ${managementDataId}の変更履歴は${rows.length}件なので、${query.selection.index}回目の変更はありません。`;
+    selectedRows = [selected];
+  }
+
+  const lines = selectedRows.map(({ row, index }) => {
     const before = formatManagementHistoryValue(row.previous_amount, row.previous_currency) || '不明';
     const after = formatManagementHistoryValue(row.new_amount, row.new_currency) || '不明';
     const changedAt = formatManagementHistoryChangedAt(row.changed_at);
-    const base = `${index + 1}. ${changedAt ? `${changedAt}：` : ''}${before} → ${after}`;
+    const base = `${index}. ${changedAt ? `${changedAt}：` : ''}${before} → ${after}`;
     if (!query.includeDetails) return base;
     const reason = managementHistoryReason(row);
     const details = [`変更理由：${reason}`];
@@ -257,7 +292,10 @@ function managementDataIdHistoryAnswer(entries, currentEntry, query = {}) {
     ? `\n現在は管理ID ${supersededBy}へ重複整理済みです。`
     : currentValue ? `\n現在の登録値は${currentValue}です。` : '';
 
-  return `管理ID ${managementDataId}（${dateLabel} ${businessName} ${metricName}）の変更履歴は${rows.length}件です。\n${lines.join('\n')}${statusText}`;
+  const selectionLabel = query.selection
+    ? `の${selectedRows[0].index}回目の変更です。`
+    : `の変更履歴は${rows.length}件です。`;
+  return `管理ID ${managementDataId}（${dateLabel} ${businessName} ${metricName}）${selectionLabel}\n${lines.join('\n')}${statusText}`;
 }
 
 function detectManagementDataHistoryQuery(message) {
