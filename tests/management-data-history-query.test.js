@@ -1610,3 +1610,33 @@ test('Phase 6.53 reports superseded status instead of pretending a duplicate row
   assert.match(answer, /保存されている変更履歴はありません/);
   assert.match(answer, /現在は管理ID 7へ重複整理済み/);
 });
+
+
+test('Phase 6.55 formats a history point restore as a readable reason and source history ID', () => {
+  const row = {
+    management_data_id:'8', business_key:'north-star-beans', data_date:'2026-08-15', metric_type:'revenue',
+    previous_amount:125000, new_amount:126000, previous_currency:'JPY', new_currency:'JPY',
+    source:'owner confirmed history point restore',
+    change_note:'owner confirmed history point restore\\nsource history id: 1',
+    changed_at:'2026-09-28T00:59:00.000Z'
+  };
+  const answer = managementDataIdHistoryAnswer([row], {
+    id:'8', business_key:'north-star-beans', data_date:'2026-08-15', metric_type:'revenue', amount:126000, currency:'JPY'
+  }, { managementDataId:'8', includeDetails:true });
+  assert.match(answer, /変更理由：変更履歴から指定した過去時点の値へ復元しました。/);
+  assert.match(answer, /復元元の変更履歴ID：1/);
+  assert.doesNotMatch(answer, /確認時の入力文：「owner confirmed history point restore/);
+  assert.doesNotMatch(answer, /変更理由は個別には記録されていません/);
+});
+
+test('Phase 6.55 keeps existing history restore, correction, and ordinary input audit displays', () => {
+  const rows = [
+    { management_data_id:'8', business_key:'north-star-beans', data_date:'2026-08-15', metric_type:'revenue', previous_amount:120000, new_amount:125000, previous_currency:'JPY', new_currency:'JPY', source:'owner confirmed history restore', change_note:'最初の値に戻して', changed_at:'2026-09-26T00:00:00.000Z' },
+    { management_data_id:'8', business_key:'north-star-beans', data_date:'2026-08-15', metric_type:'revenue', previous_amount:125000, new_amount:126000, previous_currency:'JPY', new_currency:'JPY', source:'owner confirmed correction', change_note:'売上を126000円に訂正', changed_at:'2026-09-26T00:01:00.000Z' }
+  ];
+  const answer = managementDataIdHistoryAnswer(rows, null, { managementDataId:'8', includeDetails:true });
+  assert.match(answer, /変更履歴から最初の値へ復元/);
+  assert.match(answer, /確認時の入力文：「最初の値に戻して」/);
+  assert.match(answer, /オーナー確認による訂正/);
+  assert.match(answer, /確認時の入力文：「売上を126000円に訂正」/);
+});
