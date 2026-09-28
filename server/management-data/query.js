@@ -244,9 +244,8 @@ function managementDataIdHistoryAnswer(entries, currentEntry, query = {}) {
     const base = `${index + 1}. ${changedAt ? `${changedAt}：` : ''}${before} → ${after}`;
     if (!query.includeDetails) return base;
     const reason = managementHistoryReason(row);
-    const originalInput = managementHistoryOriginalInput(row);
     const details = [`変更理由：${reason}`];
-    details.push(originalInput ? `確認時の入力文：「${originalInput}」` : '確認時の入力文：記録されていません');
+    details.push(managementHistoryInputDetail(row));
     return `${base}\n   ${details.join('\n   ')}`;
   });
 
@@ -1357,15 +1356,33 @@ function managementHistoryReason(row) {
   if (source === 'owner confirmed history restore') {
     return '記録上は「変更履歴から最初の値へ復元」です。復元の指示内容は確認時の入力文に記録されています。';
   }
+  if (source === 'owner confirmed history point restore') {
+    return '変更履歴から指定した過去時点の値へ復元しました。';
+  }
   if (source === 'owner confirmed conversation') {
     return 'オーナーが会話内容を確認して保存しました。';
   }
   return '変更理由は個別には記録されていません。';
 }
 
+function managementHistoryRestoreSourceHistoryId(row) {
+  if (String(row?.source || '').trim() !== 'owner confirmed history point restore') return null;
+  const note = String(row?.change_note || '');
+  const match = note.match(/(?:^|\n)\s*source\s+history\s+id\s*:\s*(\d+)\s*(?:$|\n)/i);
+  return match ? match[1] : null;
+}
+
 function managementHistoryOriginalInput(row) {
+  if (String(row?.source || '').trim() === 'owner confirmed history point restore') return null;
   const note = String(row?.change_note || '').trim();
   return note || null;
+}
+
+function managementHistoryInputDetail(row) {
+  const sourceHistoryId = managementHistoryRestoreSourceHistoryId(row);
+  if (sourceHistoryId) return `復元元の変更履歴ID：${sourceHistoryId}`;
+  const originalInput = managementHistoryOriginalInput(row);
+  return originalInput ? `確認時の入力文：「${originalInput}」` : '確認時の入力文：記録されていません';
 }
 
 function managementDataHistoryAnswer(entries, currentEntry, query = {}) {
@@ -1396,10 +1413,7 @@ function managementDataHistoryAnswer(entries, currentEntry, query = {}) {
     const details = [];
     if (query.includeActor) details.push(`変更者：${managementHistoryActor(row)}`);
     if (query.includeReason) details.push(`変更理由：${managementHistoryReason(row)}`);
-    if (query.includeSourceText) {
-      const originalInput = managementHistoryOriginalInput(row);
-      details.push(originalInput ? `確認時の入力文：「${originalInput}」` : '確認時の入力文：記録されていません');
-    }
+    if (query.includeSourceText) details.push(managementHistoryInputDetail(row));
     return `${base}\n   ${details.join('\n   ')}`;
   });
   const currentText = currentValue
