@@ -80,14 +80,20 @@ function managementDataCandidateAcknowledgement(candidates, duplicateCount = 0) 
     : '';
   if (!items.length) return duplicateText;
 
-  const restoreCount = items.filter(item => item?.operation === 'restore').length;
+  const initialRestoreCount = items.filter(item => item?.operation === 'restore').length;
+  const historyRestoreCount = items.filter(item => item?.operation === 'history-restore').length;
+  const restoreCount = initialRestoreCount + historyRestoreCount;
   const updateCount = items.filter(item => item?.operation === 'update').length;
   const createCount = items.length - updateCount - restoreCount;
   let pendingText = '';
-  if (restoreCount && !updateCount && !createCount) {
+  if (initialRestoreCount && !historyRestoreCount && !updateCount && !createCount) {
     pendingText = restoreCount === 1
       ? '変更履歴から最初の値への復元候補を作成しました。まだ復元していません。現在値と復元する値を確認し、「確認して復元」を押した場合だけ更新します。'
       : `変更履歴から最初の値への復元候補を${restoreCount}件作成しました。まだ復元していません。それぞれ現在値と復元する値を確認し、「確認して復元」を押した場合だけ更新します。`;
+  } else if (historyRestoreCount && !initialRestoreCount && !updateCount && !createCount) {
+    pendingText = historyRestoreCount === 1
+      ? '経営数値の復元候補を作成しました。まだ復元していません。下の内容を確認し、「確認して復元」を押した場合だけ復元します。'
+      : `経営数値の復元候補を${historyRestoreCount}件作成しました。まだ復元していません。下の内容を確認し、それぞれ「確認して復元」を押した場合だけ復元します。`;
   } else if (updateCount && !createCount && !restoreCount) {
     pendingText = updateCount === 1
       ? '既存の経営数値と異なる値が入力されたため、更新候補を作成しました。まだ更新していません。現在値と新しい値を確認し、「確認して更新」を押した場合だけ更新します。'
