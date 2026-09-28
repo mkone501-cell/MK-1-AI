@@ -1640,3 +1640,41 @@ test('Phase 6.55 keeps existing history restore, correction, and ordinary input 
   assert.match(answer, /オーナー確認による訂正/);
   assert.match(answer, /確認時の入力文：「売上を126000円に訂正」/);
 });
+
+
+function phase656Rows() {
+  return [
+    { id:'1', management_data_id:'8', business_key:'north-star-beans', data_date:'2026-08-15', metric_type:'revenue', previous_amount:124000, new_amount:125000, previous_currency:'JPY', new_currency:'JPY', source:'owner confirmed correction', change_note:'1回目', changed_at:'2026-09-26T00:00:00.000Z', confirmed_by_owner:true },
+    { id:'2', management_data_id:'8', business_key:'north-star-beans', data_date:'2026-08-15', metric_type:'revenue', previous_amount:125000, new_amount:126000, previous_currency:'JPY', new_currency:'JPY', source:'owner confirmed correction', change_note:'2回目', changed_at:'2026-09-26T00:01:00.000Z', confirmed_by_owner:true },
+    { id:'3', management_data_id:'8', business_key:'north-star-beans', data_date:'2026-08-15', metric_type:'revenue', previous_amount:126000, new_amount:125000, previous_currency:'JPY', new_currency:'JPY', source:'owner confirmed correction', change_note:'3回目', changed_at:'2026-09-26T00:02:00.000Z', confirmed_by_owner:true },
+    { id:'5', management_data_id:'8', business_key:'north-star-beans', data_date:'2026-08-15', metric_type:'revenue', previous_amount:125000, new_amount:126000, previous_currency:'JPY', new_currency:'JPY', source:'owner confirmed history point restore', change_note:'owner confirmed history point restore\nsource history id: 1', changed_at:'2026-09-28T00:59:00.000Z', confirmed_by_owner:true }
+  ];
+}
+function phase656Current() {
+  return { id:'8', business_key:'north-star-beans', data_date:'2026-08-15', metric_type:'revenue', amount:126000, currency:'JPY' };
+}
+test('Phase 6.56 detects first, last, and ordinal single-history read-only requests', () => {
+  assert.deepEqual(detectManagementDataIdHistoryQuery('管理ID8の最初の変更だけ見せて'), { managementDataId:'8', includeDetails:false, selection:{ type:'first' } });
+  assert.deepEqual(detectManagementDataIdHistoryQuery('管理ID8の最後の変更だけ詳しく教えて'), { managementDataId:'8', includeDetails:true, selection:{ type:'last' } });
+  for (const phrase of ['2回目', '2件目', '2番目']) assert.deepEqual(detectManagementDataIdHistoryQuery(`管理ID8の${phrase}の変更を詳しく`), { managementDataId:'8', includeDetails:true, selection:{ type:'index', index:2 } });
+  for (const phrase of ['３回目', '３件目', '３番目']) assert.deepEqual(detectManagementDataIdHistoryQuery(`管理ID8の${phrase}の変更を詳しく`), { managementDataId:'8', includeDetails:true, selection:{ type:'index', index:3 } });
+});
+test('Phase 6.56 shows only the selected original ordinal and keeps Phase 6.55 details', () => {
+  const answer = managementDataIdHistoryAnswer(phase656Rows(), phase656Current(), { managementDataId:'8', includeDetails:true, selection:{ type:'last' } });
+  assert.match(answer, /管理ID 8（2026\/08\/15 NORTH STAR BEANS 売上）の4回目の変更です。/);
+  assert.match(answer, /4\. 2026\/09\/28 09:59：125,000円 → 126,000円/);
+  assert.match(answer, /変更履歴から指定した過去時点の値へ復元しました。/);
+  assert.match(answer, /復元元の変更履歴ID：1/);
+  assert.doesNotMatch(answer, /1\. 2026\/09\/26/);
+  assert.doesNotMatch(answer, /確認時の入力文：「owner confirmed history point restore/);
+});
+test('Phase 6.56 reports an absent ordinal without selecting another history row', () => {
+  const answer = managementDataIdHistoryAnswer(phase656Rows(), phase656Current(), { managementDataId:'8', includeDetails:true, selection:{ type:'index', index:7 } });
+  assert.equal(answer, '管理ID 8の変更履歴は4件なので、7回目の変更はありません。');
+});
+test('Phase 6.56 safely inherits one recent ID and never intercepts a history restore request', () => {
+  const history = [{ role:'assistant', content:'管理ID 8（2026/08/15 NORTH STAR BEANS 売上）の変更履歴は4件です。' }];
+  assert.deepEqual(detectManagementDataIdHistoryQuery('その2回目の変更を詳しく教えて', history), { managementDataId:'8', includeDetails:true, selection:{ type:'index', index:2 } });
+  assert.equal(detectManagementDataIdHistoryQuery('2番目の変更後の値に戻して', history), null);
+  assert.equal(detectManagementDataIdHistoryQuery('その最後の変更だけ見せて', [{ role:'assistant', content:'管理ID 7と管理ID 8の履歴です。' }]), null);
+});
