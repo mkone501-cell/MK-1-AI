@@ -142,7 +142,7 @@ function managementDataCandidateView(item) {
   const unit = item.metricType === 'customers' || item.currency === 'COUNT' ? '人' : '円';
   const heading = restoring ? '経営数値の復元候補があります' : updating ? '経営数値の更新候補があります' : '経営数値の保存候補があります';
   const valueBlock = changingExisting
-    ? `<p><strong>現在登録されている値</strong></p><h3>${Number(item.previousAmount).toLocaleString('ja-JP')}${unit}</h3><p><strong>${historyPointRestore ? '選択した変更後の過去値' : restoring ? '変更履歴上の最初の値' : '新しい値'}</strong></p><h3>${Number(item.amount).toLocaleString('ja-JP')}${unit}</h3>${historyPointRestore ? `<small>管理ID ${safe(item.existingEntryId)} ・ 履歴番号 ${safe(item.restoreHistoryIndex)} ・ 変更日時 ${safe(item.restoreHistoryChangedAt || '不明')} ・ history ID ${safe(item.restoreHistoryEntryId)}</small>` : ''}`
+    ? `<p><strong>現在登録されている値</strong></p><h3>${Number(item.previousAmount).toLocaleString('ja-JP')}${unit}</h3><p><strong>${historyPointRestore ? item.restoreTargetSide === 'previous' ? '選択した変更前の過去値' : '選択した変更後の過去値' : restoring ? '変更履歴上の最初の値' : '新しい値'}</strong></p><h3>${Number(item.amount).toLocaleString('ja-JP')}${unit}</h3>${historyPointRestore ? `<small>管理ID ${safe(item.existingEntryId)} ・ 履歴番号 ${safe(item.restoreHistoryIndex)} ・ 復元対象 ${safe(item.restoreTargetSide === 'previous' ? '変更前' : '変更後')} ・ 変更日時 ${safe(item.restoreHistoryChangedAt || '不明')} ・ history ID ${safe(item.restoreHistoryEntryId)}</small>` : ''}`
     : `<h3>${Number(item.amount).toLocaleString('ja-JP')}${unit}</h3>`;
   const confirmText = historyPointRestore
     ? '現在値・選択した履歴・復元先を確認して「確認して復元」を押した場合だけ更新します。'
@@ -242,6 +242,7 @@ async function decideManagementDataCandidate(id, accept) {
         previousCurrency:item.previousCurrency || null,
         restoreHistoryEntryId:item.restoreHistoryEntryId || null,
         restoreHistoryIndex:item.restoreHistoryIndex || null,
+        restoreTargetSide:item.restoreTargetSide || 'new',
         expectedUpdatedAt:item.expectedUpdatedAt || null
       })
     });

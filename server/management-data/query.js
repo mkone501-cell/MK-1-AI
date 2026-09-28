@@ -1395,6 +1395,9 @@ function managementHistoryReason(row) {
     return '記録上は「変更履歴から最初の値へ復元」です。復元の指示内容は確認時の入力文に記録されています。';
   }
   if (source === 'owner confirmed history point restore') {
+    const side = managementHistoryRestoreSourceHistorySide(row);
+    if (side === 'previous') return '変更履歴から指定した変更前の値へ復元しました。';
+    if (side === 'new') return '変更履歴から指定した変更後の値へ復元しました。';
     return '変更履歴から指定した過去時点の値へ復元しました。';
   }
   if (source === 'owner confirmed conversation') {
@@ -1408,6 +1411,12 @@ function managementHistoryRestoreSourceHistoryId(row) {
   const note = String(row?.change_note || '');
   const match = note.match(/(?:^|\n)\s*source\s+history\s+id\s*:\s*(\d+)\s*(?:$|\n)/i);
   return match ? match[1] : null;
+}
+
+function managementHistoryRestoreSourceHistorySide(row) {
+  if (String(row?.source || '').trim() !== 'owner confirmed history point restore') return null;
+  const match = String(row?.change_note || '').match(/(?:^|\n)\s*source\s+history\s+side\s*:\s*(previous|new)\s*(?:$|\n)/i);
+  return match ? match[1].toLowerCase() : null;
 }
 
 function managementHistoryOriginalInput(row) {
