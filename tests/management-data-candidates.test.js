@@ -160,3 +160,20 @@ test('Phase 6.37 distinguishes mixed new-save and update candidates', () => {
   assert.match(answer, /新規保存候補を1件、更新候補を1件/);
   assert.match(answer, /まだ保存・更新していません/);
 });
+
+
+test('Phase 6.54 describes a selected historical point as a restore candidate, not a save candidate', () => {
+  const item = {
+    ...detectManagementDataCandidate('2026年8月15日のNORTH STAR BEANSの売上は126000円です'),
+    operation:'history-restore',
+    existingEntryId:'8',
+    previousAmount:125000,
+    previousCurrency:'JPY',
+    restoreHistoryEntryId:'123',
+    restoreHistoryIndex:2
+  };
+  const answer = managementDataCandidateAcknowledgement([item]);
+  assert.equal(answer, '経営数値の復元候補を作成しました。まだ復元していません。下の内容を確認し、「確認して復元」を押した場合だけ復元します。');
+  assert.doesNotMatch(answer, /保存候補/);
+  assert.doesNotMatch(answer, /確認して保存/);
+});
