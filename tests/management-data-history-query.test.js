@@ -1629,6 +1629,21 @@ test('Phase 6.55 formats a history point restore as a readable reason and source
   assert.doesNotMatch(answer, /変更理由は個別には記録されていません/);
 });
 
+test('Phase 6.58 distinguishes whether a history point restore used the previous or new value', () => {
+  const base = {
+    management_data_id:'8', business_key:'north-star-beans', data_date:'2026-08-15', metric_type:'revenue',
+    previous_amount:125000, new_amount:126000, previous_currency:'JPY', new_currency:'JPY',
+    source:'owner confirmed history point restore', changed_at:'2026-09-28T00:59:00.000Z'
+  };
+  const previous = managementDataIdHistoryAnswer([{ ...base, change_note:'owner confirmed history point restore\nsource history id: 2\nsource history side: previous' }], null, { managementDataId:'8', includeDetails:true });
+  assert.match(previous, /変更履歴から指定した変更前の値へ復元しました。/);
+  assert.match(previous, /復元元の変更履歴ID：2/);
+  assert.doesNotMatch(previous, /確認時の入力文：「owner confirmed history point restore/);
+  const next = managementDataIdHistoryAnswer([{ ...base, change_note:'owner confirmed history point restore\nsource history id: 2\nsource history side: new' }], null, { managementDataId:'8', includeDetails:true });
+  assert.match(next, /変更履歴から指定した変更後の値へ復元しました。/);
+  assert.match(next, /復元元の変更履歴ID：2/);
+});
+
 test('Phase 6.55 keeps existing history restore, correction, and ordinary input audit displays', () => {
   const rows = [
     { management_data_id:'8', business_key:'north-star-beans', data_date:'2026-08-15', metric_type:'revenue', previous_amount:120000, new_amount:125000, previous_currency:'JPY', new_currency:'JPY', source:'owner confirmed history restore', change_note:'最初の値に戻して', changed_at:'2026-09-26T00:00:00.000Z' },
