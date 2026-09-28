@@ -102,6 +102,8 @@ function managementDataCandidateAcknowledgement(candidates, duplicateCount = 0) 
     pendingText = createCount === 1
       ? '経営数値の保存候補を作成しました。まだ保存していません。下の内容を確認し、「確認して保存」を押した場合だけ保存します。'
       : `経営数値の保存候補を${createCount}件作成しました。まだ保存していません。下の内容を確認し、それぞれ「確認して保存」を押した場合だけ保存します。`;
+  } else if (!restoreCount) {
+    pendingText = `経営数値の新規保存候補を${createCount}件、更新候補を${updateCount}件作成しました。まだ保存・更新していません。内容を確認し、それぞれの確認ボタンを押した場合だけ保存・更新します。`;
   } else {
     pendingText = `経営数値の新規保存候補を${createCount}件、更新候補を${updateCount}件、復元候補を${restoreCount}件作成しました。まだ反映していません。内容を確認し、それぞれの確認ボタンを押した場合だけ反映します。`;
   }
