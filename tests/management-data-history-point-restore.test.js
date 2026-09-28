@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   detectHistoryPointRestoreRequest,
+  recentSingleDisplayedHistoryReference,
   resolveHistoryPoint,
   orderedHistory,
   historyMinute
@@ -32,6 +33,28 @@ test('Phase 6.54 carries one immediately preceding management ID only for a numb
   ]);
   assert.equal(request.managementDataId, 8);
   assert.deepEqual(request.selector, { type:'index', index:3 });
+});
+
+
+test('Phase 6.57 restores only the single history entry just displayed by Phase 6.56', () => {
+  const history = [{ role:'assistant', content:'管理ID 8（2026/08/15 NORTH STAR BEANS 売上）の2回目の変更です。\n2. 2026/09/26 22:05：126,000円 → 125,000円\n   変更理由：記録済みです。' }];
+  assert.deepEqual(recentSingleDisplayedHistoryReference(history), { managementDataId:8, selector:{ type:'index', index:2 } });
+  for (const message of ['この変更後の値に戻して', 'その変更に戻して', '今見せてもらった変更に戻して']) {
+    assert.deepEqual(detectHistoryPointRestoreRequest(message, history), { managementDataId:8, selector:{ type:'index', index:2 }, error:null, contextual:true });
+  }
+});
+
+test('Phase 6.57 never infers a contextual restore from a full or multi-ID history response', () => {
+  assert.deepEqual(detectHistoryPointRestoreRequest('この変更に戻して', [{ role:'assistant', content:'管理ID 8の変更履歴は2件です。\n1. 125,000円 → 126,000円\n2. 126,000円 → 125,000円' }]), { managementDataId:null, selector:null, error:'historyPointRequired' });
+  assert.deepEqual(detectHistoryPointRestoreRequest('その変更に戻して', [{ role:'assistant', content:'管理ID 7と管理ID 8の変更履歴です。\n2. 125,000円 → 126,000円' }]), { managementDataId:null, selector:null, error:'historyPointRequired' });
+  assert.equal(detectHistoryPointRestoreRequest('戻して', [{ role:'assistant', content:'管理ID 8（x）の2回目の変更です。\n2. x' }]), null);
+});
+
+test('Phase 6.57 keeps explicit ordinal restores first and accepts 回目・件目・full-width numbers', () => {
+  for (const phrase of ['2番目', '2回目', '2件目', '３番目', '３回目', '３件目']) {
+    const expected = phrase.startsWith('３') ? 3 : 2;
+    assert.deepEqual(detectHistoryPointRestoreRequest(`管理ID8の${phrase}の変更後の値に戻して`, []), { managementDataId:8, selector:{ type:'index', index:expected }, error:null });
+  }
 });
 
 test('Phase 6.54 does not guess a history target without management ID or safe context', () => {
