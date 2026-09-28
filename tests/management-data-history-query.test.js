@@ -1617,7 +1617,7 @@ test('Phase 6.55 formats a history point restore as a readable reason and source
     management_data_id:'8', business_key:'north-star-beans', data_date:'2026-08-15', metric_type:'revenue',
     previous_amount:125000, new_amount:126000, previous_currency:'JPY', new_currency:'JPY',
     source:'owner confirmed history point restore',
-    change_note:'owner confirmed history point restore\\nsource history id: 1',
+    change_note:'owner confirmed history point restore\nsource history id: 1',
     changed_at:'2026-09-28T00:59:00.000Z'
   };
   const answer = managementDataIdHistoryAnswer([row], {
