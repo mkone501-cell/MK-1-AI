@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   detectHistoryPointRestoreRequest,
+  historyPointRestoreTargetSide,
   recentSingleDisplayedHistoryReference,
   resolveHistoryPoint,
   orderedHistory,
@@ -19,8 +20,8 @@ const rows = [
 
 test('Phase 6.54 resolves the second displayed history row in changed_at/id ascending order', () => {
   const request = detectHistoryPointRestoreRequest('管理ID8の2番目の変更後の値に戻して');
-  assert.deepEqual(request, { managementDataId:8, selector:{ type:'index', index:2 }, error:null });
-  const resolved = resolveHistoryPoint(rows, request.selector);
+  assert.deepEqual(request, { managementDataId:8, selector:{ type:'index', index:2 }, targetSide:'new', error:null });
+  const resolved = resolveHistoryPoint(rows, request.selector, request.targetSide);
   assert.equal(resolved.historyEntry.id, 12);
   assert.equal(resolved.historyIndex, 2);
   assert.equal(resolved.amount, 125000);
@@ -40,7 +41,7 @@ test('Phase 6.57 restores only the single history entry just displayed by Phase 
   const history = [{ role:'assistant', content:'管理ID 8（2026/08/15 NORTH STAR BEANS 売上）の2回目の変更です。\n2. 2026/09/26 22:05：126,000円 → 125,000円\n   変更理由：記録済みです。' }];
   assert.deepEqual(recentSingleDisplayedHistoryReference(history), { managementDataId:8, selector:{ type:'index', index:2 } });
   for (const message of ['この変更後の値に戻して', 'その変更に戻して', '今見せてもらった変更に戻して']) {
-    assert.deepEqual(detectHistoryPointRestoreRequest(message, history), { managementDataId:8, selector:{ type:'index', index:2 }, error:null, contextual:true });
+    assert.deepEqual(detectHistoryPointRestoreRequest(message, history), { managementDataId:8, selector:{ type:'index', index:2 }, targetSide:'new', error:null, contextual:true });
   }
 });
 
@@ -53,7 +54,7 @@ test('Phase 6.57 never infers a contextual restore from a full or multi-ID histo
 test('Phase 6.57 keeps explicit ordinal restores first and accepts 回目・件目・full-width numbers', () => {
   for (const phrase of ['2番目', '2回目', '2件目', '３番目', '３回目', '３件目']) {
     const expected = phrase.startsWith('３') ? 3 : 2;
-    assert.deepEqual(detectHistoryPointRestoreRequest(`管理ID8の${phrase}の変更後の値に戻して`, []), { managementDataId:8, selector:{ type:'index', index:expected }, error:null });
+    assert.deepEqual(detectHistoryPointRestoreRequest(`管理ID8の${phrase}の変更後の値に戻して`, []), { managementDataId:8, selector:{ type:'index', index:expected }, targetSide:'new', error:null });
   }
 });
 
@@ -106,10 +107,12 @@ test('Phase 6.54 server confirmation remains owner-scoped, stale-checked and ser
   const source = fs.readFileSync(require.resolve('../server/server'), 'utf8');
   assert.match(source, /managementData\.findById\(auth\.ownerEmail, expectedEntryId\)/);
   assert.match(source, /managementData\.findHistoryByManagementDataId\(auth\.ownerEmail, expectedEntryId\)/);
-  assert.match(source, /resolveHistoryPoint\(entries, request\.selector\)/);
+  assert.match(source, /historyPointRestoreTargetSide\(body\.originalText\)/);
+  assert.match(source, /resolveHistoryPoint\(entries, request\.selector \|\| \{ type:'index', index:expectedHistoryIndex \}, expectedTargetSide\)/);
   assert.match(source, /new Date\(existing\.updated_at\)\.getTime\(\) !== new Date\(expectedUpdatedAt\)\.getTime\(\)/);
   assert.match(source, /owner confirmed history point restore/);
   assert.match(source, /source history id:/);
+  assert.match(source, /source history side:/);
 });
 
 test('Phase 6.54 candidate UI has no write action until explicit confirmation and sends only a history reference', () => {
@@ -119,4 +122,36 @@ test('Phase 6.54 candidate UI has no write action until explicit confirmation an
   assert.match(source, /今回は復元しない/);
   assert.match(source, /restoreHistoryEntryId:item\.restoreHistoryEntryId/);
   assert.match(source, /expectedUpdatedAt:item\.expectedUpdatedAt/);
+  assert.match(source, /restoreTargetSide:item\.restoreTargetSide \|\| 'new'/);
+  assert.match(source, /選択した変更前の過去値/);
+  assert.match(source, /選択した変更後の過去値/);
+});
+
+test('Phase 6.58 resolves explicitly selected previous and new values only from the history row', () => {
+  const previous = detectHistoryPointRestoreRequest('管理ID8の2回目の変更前の値に戻して');
+  assert.deepEqual(previous, { managementDataId:8, selector:{ type:'index', index:2 }, targetSide:'previous', error:null });
+  const previousTarget = resolveHistoryPoint(rows, previous.selector, previous.targetSide);
+  assert.equal(previousTarget.historyEntry.id, 12);
+  assert.equal(previousTarget.targetSide, 'previous');
+  assert.equal(previousTarget.amount, 126000);
+  assert.equal(previousTarget.currency, 'JPY');
+  const next = detectHistoryPointRestoreRequest('管理ID8の2回目の変更後の値に戻して');
+  assert.deepEqual(next, { managementDataId:8, selector:{ type:'index', index:2 }, targetSide:'new', error:null });
+  assert.equal(resolveHistoryPoint(rows, next.selector, next.targetSide).amount, 125000);
+});
+
+test('Phase 6.58 accepts ordinal variants and safely carries the selected side from one single-history display', () => {
+  for (const phrase of ['2件目', '2番目', '２回目', '２件目', '２番目']) {
+    const request = detectHistoryPointRestoreRequest(`管理ID8の${phrase}の変更前の値へ復元して`);
+    assert.equal(request.selector.index, 2);
+    assert.equal(request.targetSide, 'previous');
+  }
+  assert.equal(historyPointRestoreTargetSide('管理ID8の2番目に戻して'), 'new');
+  const history = [{ role:'assistant', content:'管理ID 8（2026/08/15 NORTH STAR BEANS 売上）の2回目の変更です。\n2. 2026/09/26 22:05：126,000円 → 125,000円' }];
+  assert.equal(detectHistoryPointRestoreRequest('この変更前の値に戻して', history).targetSide, 'previous');
+  assert.equal(detectHistoryPointRestoreRequest('その変更後の値に戻して', history).targetSide, 'new');
+  assert.equal(detectHistoryPointRestoreRequest('この変更に戻して', history).targetSide, 'new');
+  const standalone = detectHistoryPointRestoreRequest('前の値に戻して', history);
+  assert.equal(standalone.managementDataId, null);
+  assert.equal(standalone.selector, null);
 });
