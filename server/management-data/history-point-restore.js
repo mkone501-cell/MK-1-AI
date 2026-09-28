@@ -1,7 +1,8 @@
 'use strict';
 
 function managementDataIdFromText(message) {
-  const match = String(message || '').match(/管理\s*ID\s*#?\s*(\d+)/i);
+  const text = String(message || '').replace(/[０-９]/g, char => String.fromCharCode(char.charCodeAt(0) - 0xFEE0));
+  const match = text.match(/管理\s*ID\s*#?\s*(\d+)/i);
   return match ? Number(match[1]) : null;
 }
 
@@ -29,7 +30,7 @@ function japaneseOrdinal(value) {
 function parseHistoryPointSelectors(message) {
   const text = String(message || '').replace(/[０-９]/g, char => String.fromCharCode(char.charCodeAt(0) - 0xFEE0));
   const selectors = [];
-  const indexMatch = text.match(/(\d+|[一二三四五六七八九十]+)番目/);
+  const indexMatch = text.match(/(\d+|[一二三四五六七八九十]+)(?:番目|回目|件目)/);
   if (indexMatch) {
     const index = japaneseOrdinal(indexMatch[1]);
     if (Number.isInteger(index) && index > 0) selectors.push({ type:'index', index });
@@ -47,6 +48,32 @@ function parseHistoryPointSelectors(message) {
   return selectors;
 }
 
+function isHistoryPointRestoreIntent(message) {
+  return /(?:戻して|戻す|復元して|復元する|この値に戻す|戻したい)/.test(String(message || ''));
+}
+
+function isContextualHistoryRestorePhrase(message) {
+  const text = String(message || '').trim();
+  return /(?:この|その)(?:変更後の値|変更|履歴)(?:に|へ)?(?:戻して|戻す|復元して|復元する)/.test(text)
+    || /今(?:見せてもらった|の)?(?:変更後の値|変更|履歴)(?:に|へ)?(?:戻して|戻す|復元して|復元する)/.test(text);
+}
+
+function recentSingleDisplayedHistoryReference(history) {
+  const turns = Array.isArray(history) ? history : [];
+  const last = turns[turns.length - 1];
+  if (!last || last.role !== 'assistant') return null;
+  const text = String(last.content || '').replace(/[０-９]/g, char => String.fromCharCode(char.charCodeAt(0) - 0xFEE0));
+  const ids = [...text.matchAll(/管理\s*ID\s*#?\s*(\d+)/gi)].map(match => Number(match[1]));
+  const uniqueIds = [...new Set(ids)];
+  const match = text.match(/^管理ID\s*(\d+)[^\n]{0,200}?の(\d+)回目の変更です。\s*\n\s*\2\./m);
+  const numberedRows = [...text.matchAll(/^\s*\d+\.\s/gm)];
+  if (!match || uniqueIds.length !== 1 || Number(match[1]) !== uniqueIds[0] || numberedRows.length !== 1) return null;
+  const historyIndex = Number(match[2]);
+  return Number.isInteger(historyIndex) && historyIndex > 0
+    ? { managementDataId:uniqueIds[0], selector:{ type:'index', index:historyIndex } }
+    : null;
+}
+
 function isInitialRestorePhrase(message) {
   const text = String(message || '');
   return /(一番最初|最初|当初|初回).{0,20}(戻して|戻す|復元して|復元する)/.test(text);
@@ -54,13 +81,19 @@ function isInitialRestorePhrase(message) {
 
 function detectHistoryPointRestoreRequest(message, history = []) {
   const text = String(message || '').trim();
-  const hasRestoreIntent = /(戻して|戻す|復元して|復元する|この値に戻す|戻したい)/.test(text);
-  const hasHistoryReference = /(管理\s*ID|番目|変更後|履歴|過去|時点|前の値|その変更|その履歴)/.test(text);
+  const hasRestoreIntent = isHistoryPointRestoreIntent(text);
+  const hasHistoryReference = /(管理\s*ID|番目|回目|件目|変更後|履歴|過去|時点|前の値|その変更|その履歴)/.test(text)
+    || isContextualHistoryRestorePhrase(text);
   if (!hasRestoreIntent || !hasHistoryReference || isInitialRestorePhrase(text)) return null;
 
   const selectors = parseHistoryPointSelectors(text);
   const concrete = selectors.filter(selector => selector.type !== 'ambiguousAmount');
   const explicitId = managementDataIdFromText(text);
+  if (!concrete.length && !selectors.some(selector => selector.type === 'ambiguousAmount') && !explicitId && isContextualHistoryRestorePhrase(text)) {
+    const contextual = recentSingleDisplayedHistoryReference(history);
+    if (contextual) return { ...contextual, error:null, contextual:true };
+    return { managementDataId:null, selector:null, error:'historyPointRequired' };
+  }
   const managementDataId = explicitId || recentManagementDataId(history);
   if (!managementDataId) return { managementDataId:null, selector:concrete.length === 1 ? concrete[0] : null, error:'managementDataIdRequired' };
   if (selectors.some(selector => selector.type === 'ambiguousAmount') || concrete.length !== 1) {
@@ -111,6 +144,9 @@ function resolveHistoryPoint(entries, selector) {
 
 module.exports = {
   detectHistoryPointRestoreRequest,
+  isHistoryPointRestoreIntent,
+  isContextualHistoryRestorePhrase,
+  recentSingleDisplayedHistoryReference,
   resolveHistoryPoint,
   orderedHistory,
   historyMinute
