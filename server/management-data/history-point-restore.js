@@ -52,10 +52,15 @@ function isHistoryPointRestoreIntent(message) {
   return /(?:戻して|戻す|復元して|復元する|この値に戻す|戻したい)/.test(String(message || ''));
 }
 
+function historyPointRestoreTargetSide(message) {
+  const text = String(message || '');
+  return /変更前(?:の値)?(?:に|へ)?(?:戻して|戻す|復元して|復元する)/.test(text) ? 'previous' : 'new';
+}
+
 function isContextualHistoryRestorePhrase(message) {
   const text = String(message || '').trim();
-  return /(?:この|その)(?:変更後の値|変更|履歴)(?:に|へ)?(?:戻して|戻す|復元して|復元する)/.test(text)
-    || /今(?:見せてもらった|の)?(?:変更後の値|変更|履歴)(?:に|へ)?(?:戻して|戻す|復元して|復元する)/.test(text);
+  return /(?:この|その)(?:変更(?:前|後)の値|変更|履歴)(?:に|へ)?(?:戻して|戻す|復元して|復元する)/.test(text)
+    || /今(?:見せてもらった|の)?(?:変更(?:前|後)の値|変更|履歴)(?:に|へ)?(?:戻して|戻す|復元して|復元する)/.test(text);
 }
 
 function recentSingleDisplayedHistoryReference(history) {
@@ -89,9 +94,13 @@ function detectHistoryPointRestoreRequest(message, history = []) {
   const selectors = parseHistoryPointSelectors(text);
   const concrete = selectors.filter(selector => selector.type !== 'ambiguousAmount');
   const explicitId = managementDataIdFromText(text);
+  const targetSide = historyPointRestoreTargetSide(text);
   if (!concrete.length && !selectors.some(selector => selector.type === 'ambiguousAmount') && !explicitId && isContextualHistoryRestorePhrase(text)) {
     const contextual = recentSingleDisplayedHistoryReference(history);
-    if (contextual) return { ...contextual, error:null, contextual:true };
+    if (contextual) return { ...contextual, targetSide, error:null, contextual:true };
+    return { managementDataId:null, selector:null, error:'historyPointRequired' };
+  }
+  if (!concrete.length && !selectors.some(selector => selector.type === 'ambiguousAmount') && !explicitId) {
     return { managementDataId:null, selector:null, error:'historyPointRequired' };
   }
   const managementDataId = explicitId || recentManagementDataId(history);
@@ -99,7 +108,7 @@ function detectHistoryPointRestoreRequest(message, history = []) {
   if (selectors.some(selector => selector.type === 'ambiguousAmount') || concrete.length !== 1) {
     return { managementDataId, selector:null, error:'historyPointRequired' };
   }
-  return { managementDataId, selector:concrete[0], error:null };
+  return { managementDataId, selector:concrete[0], targetSide, error:null };
 }
 
 function historyMinute(changedAt) {
@@ -123,7 +132,7 @@ function orderedHistory(entries) {
   });
 }
 
-function resolveHistoryPoint(entries, selector) {
+function resolveHistoryPoint(entries, selector, targetSide = 'new') {
   const rows = orderedHistory(entries);
   if (!selector) return { error:'historyPointRequired', rows };
   let matches = [];
@@ -136,15 +145,17 @@ function resolveHistoryPoint(entries, selector) {
   if (!matches.length) return { error:'historyPointNotFound', rows };
   if (matches.length !== 1) return { error:'historyPointAmbiguous', rows, matches };
   const historyEntry = matches[0];
-  const amount = Number(historyEntry.new_amount);
-  const currency = String(historyEntry.new_currency || '').trim().toUpperCase();
+  const side = targetSide === 'previous' ? 'previous' : 'new';
+  const amount = Number(historyEntry[`${side}_amount`]);
+  const currency = String(historyEntry[`${side}_currency`] || '').trim().toUpperCase();
   if (!Number.isFinite(amount) || !currency) return { error:'historyPointInvalid', rows };
-  return { historyEntry, historyIndex:rows.findIndex(row => String(row.id) === String(historyEntry.id)) + 1, amount, currency, rows };
+  return { historyEntry, historyIndex:rows.findIndex(row => String(row.id) === String(historyEntry.id)) + 1, targetSide:side, amount, currency, rows };
 }
 
 module.exports = {
   detectHistoryPointRestoreRequest,
   isHistoryPointRestoreIntent,
+  historyPointRestoreTargetSide,
   isContextualHistoryRestorePhrase,
   recentSingleDisplayedHistoryReference,
   resolveHistoryPoint,
